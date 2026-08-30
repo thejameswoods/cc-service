@@ -346,25 +346,36 @@ enable_and_start() {
   fi
 }
 
+# wait_until <timeout-sec> <description> cmd args...  -- polls every 1s
+wait_until() {
+  local timeout="$1" desc="$2"; shift 2
+  local waited=0
+  while ! "$@" >/dev/null 2>&1; do
+    waited=$((waited + 1))
+    [ "$waited" -ge "$timeout" ] && return 1
+    sleep 1
+  done
+  return 0
+}
+
 verify_install() {
   $DRY_RUN && { log info "[dry-run] skipping verification"; return 0; }
-  sleep 2
   local ok=true
-  if "$CC_SYSTEMCTL_CMD" is-active --quiet "cc-service@$SERVICE_NAME.service"; then
+  if wait_until 10 "daemon active" "$CC_SYSTEMCTL_CMD" is-active --quiet "cc-service@$SERVICE_NAME.service"; then
     log info "cc-service@$SERVICE_NAME.service is active"
   else
     log error "cc-service@$SERVICE_NAME.service is NOT active"
     ok=false
   fi
   if $WATCHDOG_ENABLED; then
-    if "$CC_SYSTEMCTL_CMD" is-active --quiet "cc-service-watchdog@$SERVICE_NAME.service"; then
+    if wait_until 10 "watchdog active" "$CC_SYSTEMCTL_CMD" is-active --quiet "cc-service-watchdog@$SERVICE_NAME.service"; then
       log info "cc-service-watchdog@$SERVICE_NAME.service is active"
     else
       log error "cc-service-watchdog@$SERVICE_NAME.service is NOT active"
       ok=false
     fi
   fi
-  if tmux_session_exists "$TMUX_SESSION"; then
+  if wait_until 10 "tmux session up" tmux_session_exists "$TMUX_SESSION"; then
     log info "tmux session '$TMUX_SESSION' is up"
   else
     log error "tmux session '$TMUX_SESSION' not found"
