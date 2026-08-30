@@ -87,6 +87,29 @@ EOF
   fi
 }
 
+test_install_sh_itself_not_flagged_as_loop() {
+  # Regression test: install.sh has its own `while true` (the interactive
+  # conflict-resolution retry loop) and references the word "claude" (as a
+  # required command), but never invokes claude *inside* that loop. Found
+  # via the live E2E test on the reference box, where a naive "file
+  # contains both substrings" check flagged install.sh as a foreign
+  # always-on daemon merely because a --tmux-session flag value contained
+  # the substring "claude".
+  if script_has_claude_respawn_loop "$ROOT_DIR/install.sh"; then
+    test_fail "install.sh must not be detected as a claude respawn loop"
+  else
+    pass "install.sh's own while-true loop is correctly not flagged"
+  fi
+}
+
+test_reference_daemon_script_is_flagged() {
+  if script_has_claude_respawn_loop "$FIXTURES/sample-daemon-loop.sh"; then
+    pass "a genuine claude-in-while-true daemon script is correctly flagged"
+  else
+    test_fail "sample-daemon-loop.sh should be detected as a claude respawn loop"
+  fi
+}
+
 test_normal_session_not_flagged() {
   local stubdir; stubdir=$(mktemp -d)
   cat > "$stubdir/ps" <<EOF
@@ -159,6 +182,8 @@ test_foreign_conflict_detected
 test_own_package_not_flagged_as_foreign
 test_loop_process_detected
 test_normal_session_not_flagged
+test_install_sh_itself_not_flagged_as_loop
+test_reference_daemon_script_is_flagged
 
 echo "== claude-rc-watchdog.sh patterns =="
 test_pane_patterns

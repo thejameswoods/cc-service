@@ -25,6 +25,25 @@ scan_systemd_units() {
       done
 }
 
+# Returns success if the script contains a `claude` invocation *inside* a
+# `while true ... done` block, rather than just containing both substrings
+# anywhere in the file. Plain "file has 'while true' AND file has 'claude'
+# somewhere" false-positives on any one-off script that merely mentions
+# claude in passing and happens to have an unrelated while-true loop
+# elsewhere -- install.sh itself is exactly such a case (its interactive
+# conflict-resolution retry loop is a `while true`, and it references
+# `claude` as a required command), so this proximity check is required, not
+# just a nicety.
+script_has_claude_respawn_loop() {
+  local f="$1"
+  awk '
+    /while[ \t]+true/ { inloop=1; next }
+    inloop && /claude/ { found=1 }
+    /done/ { inloop=0 }
+    END { exit !found }
+  ' "$f" 2>/dev/null
+}
+
 # --- Heuristic B: a running claude process whose parent script wraps it in a
 #     `while true` respawn loop. This is what distinguishes an always-on
 #     daemon from a developer's one-off interactive `claude` session (which
@@ -40,8 +59,7 @@ scan_loop_processes() {
           *.sh*|bash*|sh*)
             script_path=$(awk '{for(i=1;i<=NF;i++) if ($i ~ /\.sh$/) print $i}' <<<"$parent_args" | head -1)
             if [ -n "$script_path" ] && [ -r "$script_path" ] \
-               && grep -qE 'while[[:space:]]+true' "$script_path" \
-               && grep -q 'claude' "$script_path"; then
+               && script_has_claude_respawn_loop "$script_path"; then
               echo "LOOP_PROC|pid=$pid|script=$script_path"
             fi
             ;;
