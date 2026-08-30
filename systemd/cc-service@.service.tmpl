@@ -26,8 +26,14 @@ Environment=HOME={{RUN_AS_HOME}}
 # tmux new-session exactly as given, regardless of which server handles it.
 Environment=CC_CONFIG_PATH=/etc/cc-service/%i.env
 WorkingDirectory={{CC_PROJECT_DIR}}
-ExecStart=/usr/bin/tmux new-session -d -s {{CC_TMUX_SESSION}} -x 220 -y 50 {{INSTALL_DIR}}/current/bin/claude-daemon.sh /etc/cc-service/%i.env
-ExecStop=/usr/bin/tmux kill-session -t {{CC_TMUX_SESSION}}
+# -L gives this instance its own dedicated tmux server/socket rather than
+# sharing the OS user's default one -- required so Type=forking's cgroup
+# based PID tracking actually finds this instance's process tree instead
+# of an unrelated pre-existing server's (confirmed live: without -L, a
+# second instance -- or this box's own always-on session -- silently
+# stole the new session, and this unit cycled "deactivated" forever).
+ExecStart=/usr/bin/tmux -L {{CC_TMUX_SOCKET}} new-session -d -s {{CC_TMUX_SESSION}} -x 220 -y 50 {{INSTALL_DIR}}/current/bin/claude-daemon.sh /etc/cc-service/%i.env
+ExecStop=/usr/bin/tmux -L {{CC_TMUX_SOCKET}} kill-session -t {{CC_TMUX_SESSION}}
 Restart=always
 RestartSec=5
 

@@ -70,8 +70,26 @@ CC_TMUX_CMD="${CC_TMUX_CMD:-tmux}"
 CC_SYSTEMCTL_CMD="${CC_SYSTEMCTL_CMD:-systemctl}"
 CC_PS_CMD="${CC_PS_CMD:-ps}"
 
+# Every tmux call goes through this, adding -L "$CC_TMUX_SOCKET" when set.
+# Each cc-service instance gets its own dedicated socket (install.sh
+# defaults it to cc-service-<instance-name>) rather than sharing the OS
+# user's default tmux server -- confirmed necessary live: when a server for
+# that user already exists (another instance, or a pre-existing always-on
+# session), `tmux new-session -d` on it just asks that EXISTING server to
+# add a session, so the resulting process tree belongs to whichever unit
+# started that server, not to this one. Under Type=forking, systemd finds
+# nothing in its own cgroup and marks the unit "deactivated" instantly,
+# looping forever. A dedicated socket makes every instance its own server.
+tmux_run() {
+  if [ -n "${CC_TMUX_SOCKET:-}" ]; then
+    "$CC_TMUX_CMD" -L "$CC_TMUX_SOCKET" "$@"
+  else
+    "$CC_TMUX_CMD" "$@"
+  fi
+}
+
 tmux_session_exists() {
-  "$CC_TMUX_CMD" has-session -t "$1" 2>/dev/null
+  tmux_run has-session -t "$1" 2>/dev/null
 }
 
 # Returns 0 (true) if the pane's tail has been byte-identical across two
@@ -80,8 +98,8 @@ tmux_session_exists() {
 pane_is_quiet() {
   local session="$1" quiet_sec="$2" lines="$3"
   local a b
-  a=$("$CC_TMUX_CMD" capture-pane -p -t "$session" -S "-${lines}" 2>/dev/null) || return 1
+  a=$(tmux_run capture-pane -p -t "$session" -S "-${lines}" 2>/dev/null) || return 1
   sleep "$quiet_sec"
-  b=$("$CC_TMUX_CMD" capture-pane -p -t "$session" -S "-${lines}" 2>/dev/null) || return 1
+  b=$(tmux_run capture-pane -p -t "$session" -S "-${lines}" 2>/dev/null) || return 1
   [ "$a" = "$b" ]
 }

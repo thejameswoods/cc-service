@@ -256,6 +256,7 @@ write_config() {
 CC_INSTANCE_NAME="$SERVICE_NAME"
 CC_PROJECT_DIR="$PROJECT_DIR"
 CC_TMUX_SESSION="$TMUX_SESSION"
+CC_TMUX_SOCKET="$TMUX_SOCKET"
 CC_CLAUDE_NAME="$default_claude_name"
 CC_PERMISSION_MODE="$PERMISSION_MODE"
 CC_CRED_HOOK="$CRED_HOOK"
@@ -314,6 +315,7 @@ render_unit() {
   content="${content//\{\{RUN_AS_HOME\}\}/$RUN_AS_HOME}"
   content="${content//\{\{CC_PROJECT_DIR\}\}/$PROJECT_DIR}"
   content="${content//\{\{CC_TMUX_SESSION\}\}/$TMUX_SESSION}"
+  content="${content//\{\{CC_TMUX_SOCKET\}\}/$TMUX_SOCKET}"
   content="${content//\{\{INSTALL_DIR\}\}/$INSTALL_DIR}"
   if $DRY_RUN; then
     log info "[dry-run] would write $out"
@@ -331,10 +333,16 @@ render_systemd_units() {
 }
 
 enable_and_start() {
+  # enable + restart (not `enable --now`): on an upgrade the unit may
+  # already be active, and `enable --now` is a no-op start on an
+  # already-running unit -- it would never pick up a changed ExecStart.
+  # `restart` works correctly whether the unit was stopped or active.
   run_or_dry "systemctl daemon-reload" "$CC_SYSTEMCTL_CMD" daemon-reload
-  run_or_dry "enable+start cc-service@$SERVICE_NAME" "$CC_SYSTEMCTL_CMD" enable --now "cc-service@$SERVICE_NAME.service"
+  run_or_dry "enable cc-service@$SERVICE_NAME" "$CC_SYSTEMCTL_CMD" enable "cc-service@$SERVICE_NAME.service"
+  run_or_dry "restart cc-service@$SERVICE_NAME" "$CC_SYSTEMCTL_CMD" restart "cc-service@$SERVICE_NAME.service"
   if $WATCHDOG_ENABLED; then
-    run_or_dry "enable+start cc-service-watchdog@$SERVICE_NAME" "$CC_SYSTEMCTL_CMD" enable --now "cc-service-watchdog@$SERVICE_NAME.service"
+    run_or_dry "enable cc-service-watchdog@$SERVICE_NAME" "$CC_SYSTEMCTL_CMD" enable "cc-service-watchdog@$SERVICE_NAME.service"
+    run_or_dry "restart cc-service-watchdog@$SERVICE_NAME" "$CC_SYSTEMCTL_CMD" restart "cc-service-watchdog@$SERVICE_NAME.service"
   fi
 }
 
@@ -379,6 +387,12 @@ main() {
 
   ensure_service_user
   run_conflict_scan_and_resolve
+  # Computed after conflict resolution settles SERVICE_NAME (option [2] in
+  # the interactive prompt can change it). Every instance gets its own
+  # dedicated tmux socket -- see the tmux_run comment in lib/common.sh for
+  # why sharing the OS user's default server breaks Type=forking.
+  TMUX_SOCKET="cc-service-$SERVICE_NAME"
+  CC_TMUX_SOCKET="$TMUX_SOCKET"
   ensure_log_dir
   install_files
   write_config

@@ -68,8 +68,15 @@ remove_instance() {
   local watchdog_unit="cc-service-watchdog@$name.service"
   local config_file="$CONFIG_DIR/$name.env"
 
-  local tmux_session=""
-  [ -f "$config_file" ] && tmux_session=$(grep -E '^CC_TMUX_SESSION=' "$config_file" | head -1 | cut -d'"' -f2)
+  local tmux_session="" tmux_socket=""
+  if [ -f "$config_file" ]; then
+    tmux_session=$(grep -E '^CC_TMUX_SESSION=' "$config_file" | head -1 | cut -d'"' -f2)
+    tmux_socket=$(grep -E '^CC_TMUX_SOCKET=' "$config_file" | head -1 | cut -d'"' -f2)
+  fi
+  # Each instance owns a dedicated tmux socket (see lib/common.sh's
+  # tmux_run) -- set it here so tmux_session_exists/tmux_run target the
+  # right server, not the OS user's default one.
+  CC_TMUX_SOCKET="$tmux_socket"
 
   run_or_dry "disable+stop $watchdog_unit" "$CC_SYSTEMCTL_CMD" disable --now "$watchdog_unit"
   run_or_dry "disable+stop $unit" "$CC_SYSTEMCTL_CMD" disable --now "$unit"
@@ -78,7 +85,7 @@ remove_instance() {
   run_or_dry "systemctl daemon-reload" "$CC_SYSTEMCTL_CMD" daemon-reload
 
   if [ -n "$tmux_session" ] && tmux_session_exists "$tmux_session"; then
-    run_or_dry "kill tmux session $tmux_session" "$CC_TMUX_CMD" kill-session -t "$tmux_session"
+    run_or_dry "kill tmux session $tmux_session" tmux_run kill-session -t "$tmux_session"
   fi
 
   if $PURGE; then

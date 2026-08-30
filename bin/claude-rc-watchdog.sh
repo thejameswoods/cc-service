@@ -61,7 +61,7 @@ attempt_self_heal() {
   # confirming the pane is idle+quiet, so the input line should already be
   # empty. Blind-clearing could destroy a human's legitimately half-typed
   # command if someone is concurrently attached via `tmux attach`.
-  "$CC_TMUX_CMD" send-keys -t "$session" "/remote-control" Enter
+  tmux_run send-keys -t "$session" "/remote-control" Enter
 }
 
 poll_once() {
@@ -73,7 +73,7 @@ poll_once() {
   fi
 
   local capture
-  capture=$("$CC_TMUX_CMD" capture-pane -p -t "$session" -S "-${CC_WATCHDOG_PANE_LINES:-60}" 2>/dev/null) || {
+  capture=$(tmux_run capture-pane -p -t "$session" -S "-${CC_WATCHDOG_PANE_LINES:-60}" 2>/dev/null) || {
     log warn "capture-pane failed for session '$session'"
     return 0
   }
