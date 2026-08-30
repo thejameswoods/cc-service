@@ -1,15 +1,24 @@
 #!/bin/bash
 # claude-daemon.sh — persistent tmux+claude loop for one cc-service instance.
 # Invoked by the cc-service@<instance>.service systemd unit, inside a
-# `tmux new-session`. CC_CONFIG_PATH must be set in the environment (the
-# systemd unit does this via Environment=).
+# `tmux new-session`, with the config file path as $1.
+#
+# Deliberately takes the config path as a positional argument rather than
+# relying solely on the CC_CONFIG_PATH environment variable: when a tmux
+# server for this OS user already exists (e.g. another cc-service instance,
+# or the box's own always-on session), `tmux new-session` on it inherits
+# THAT SERVER's environment captured at its own start time, not this unit's
+# `Environment=` -- confirmed by a live install where CC_CONFIG_PATH never
+# reached the script and the empty session self-destructed instantly.
+# Argv, unlike environment, is always passed through exactly as given.
 set -uo pipefail   # NOT -e: a nonzero exit from `claude` must not kill the loop
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 
-CONFIG_PATH="${CC_CONFIG_PATH:?CC_CONFIG_PATH env var must be set (normally by the systemd unit)}"
+CONFIG_PATH="${1:-${CC_CONFIG_PATH:-}}"
+[ -n "$CONFIG_PATH" ] || { echo "usage: claude-daemon.sh <config-path>  (or set CC_CONFIG_PATH)" >&2; exit 1; }
 load_config "$CONFIG_PATH" || exit 1
 
 CC_LOG_FILE="${CC_LOG_DIR:-/var/log/cc-service}/${CC_INSTANCE_NAME:-default}.daemon.log"

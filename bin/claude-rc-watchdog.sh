@@ -133,7 +133,12 @@ poll_once() {
 }
 
 main() {
-  CONFIG_PATH="${CC_CONFIG_PATH:?CC_CONFIG_PATH env var must be set (normally by the systemd unit)}"
+  # Accepts the config path as $1 too, matching claude-daemon.sh's
+  # interface (this unit is Type=simple, directly execed by systemd, so
+  # its own Environment= is reliable -- but the argument form is accepted
+  # here as well for a consistent, documented interface between the two).
+  CONFIG_PATH="${1:-${CC_CONFIG_PATH:-}}"
+  [ -n "$CONFIG_PATH" ] || { echo "usage: claude-rc-watchdog.sh <config-path>  (or set CC_CONFIG_PATH)" >&2; exit 1; }
   load_config "$CONFIG_PATH" || exit 1
 
   CC_LOG_FILE="${CC_LOG_DIR:-/var/log/cc-service}/${CC_INSTANCE_NAME:-default}.watchdog.log"

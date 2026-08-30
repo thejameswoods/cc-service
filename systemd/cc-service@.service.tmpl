@@ -18,9 +18,15 @@ StartLimitIntervalSec=0
 Type=forking
 User={{RUN_AS_USER}}
 Environment=HOME={{RUN_AS_HOME}}
+# CC_CONFIG_PATH here is a documentation/fallback aid only. The real,
+# reliable path is the explicit argv below: when a tmux server for this OS
+# user already exists (another instance, or a pre-existing always-on
+# session), a new session on it inherits THAT SERVER's environment, not
+# this unit's Environment= -- confirmed live. Argv always passes through
+# tmux new-session exactly as given, regardless of which server handles it.
 Environment=CC_CONFIG_PATH=/etc/cc-service/%i.env
 WorkingDirectory={{CC_PROJECT_DIR}}
-ExecStart=/usr/bin/tmux new-session -d -s {{CC_TMUX_SESSION}} -x 220 -y 50 {{INSTALL_DIR}}/current/bin/claude-daemon.sh
+ExecStart=/usr/bin/tmux new-session -d -s {{CC_TMUX_SESSION}} -x 220 -y 50 {{INSTALL_DIR}}/current/bin/claude-daemon.sh /etc/cc-service/%i.env
 ExecStop=/usr/bin/tmux kill-session -t {{CC_TMUX_SESSION}}
 Restart=always
 RestartSec=5
