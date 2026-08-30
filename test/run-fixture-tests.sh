@@ -14,6 +14,8 @@ source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/conflict-detect.sh"
 # shellcheck source=../bin/claude-rc-watchdog.sh
 source "$ROOT_DIR/bin/claude-rc-watchdog.sh"
+# shellcheck source=../bin/claude-daemon.sh
+source "$ROOT_DIR/bin/claude-daemon.sh"
 
 PASS=0
 FAIL=0
@@ -176,6 +178,59 @@ test_busy_pattern() {
     test_fail "busy pattern must not match the normal-idle fixture"
   fi
 }
+
+test_build_claude_args_default_includes_continue() {
+  # shellcheck disable=SC2034  # consumed by build_claude_args() in bin/claude-daemon.sh, a separately sourced file
+  CC_PERMISSION_MODE=""
+  # shellcheck disable=SC2034
+  CC_CLAUDE_NAME=""
+  # shellcheck disable=SC2034
+  CC_CLAUDE_EXTRA_ARGS=""
+  local args=()
+  build_claude_args args
+  if [[ " ${args[*]} " == *" --continue "* ]]; then
+    pass "build_claude_args includes --continue by default"
+  else
+    test_fail "expected --continue in args, got: ${args[*]}"
+  fi
+}
+
+test_build_claude_args_no_continue_omits_flag() {
+  # shellcheck disable=SC2034  # consumed by build_claude_args() in bin/claude-daemon.sh, a separately sourced file
+  CC_PERMISSION_MODE=""
+  # shellcheck disable=SC2034
+  CC_CLAUDE_NAME=""
+  # shellcheck disable=SC2034
+  CC_CLAUDE_EXTRA_ARGS=""
+  local args=()
+  build_claude_args args --no-continue
+  if [[ " ${args[*]} " != *" --continue "* ]]; then
+    pass "build_claude_args --no-continue omits --continue (first-run bootstrap fallback)"
+  else
+    test_fail "expected no --continue with --no-continue, got: ${args[*]}"
+  fi
+}
+
+test_build_claude_args_omits_empty_permission_mode() {
+  # shellcheck disable=SC2034  # consumed by build_claude_args() in bin/claude-daemon.sh, a separately sourced file
+  CC_PERMISSION_MODE=""
+  # shellcheck disable=SC2034
+  CC_CLAUDE_NAME=""
+  # shellcheck disable=SC2034
+  CC_CLAUDE_EXTRA_ARGS=""
+  local args=()
+  build_claude_args args
+  if [[ " ${args[*]} " != *" --permission-mode "* ]]; then
+    pass "build_claude_args omits --permission-mode when unset (safe default)"
+  else
+    test_fail "expected no --permission-mode flag, got: ${args[*]}"
+  fi
+}
+
+echo "== claude-daemon.sh =="
+test_build_claude_args_default_includes_continue
+test_build_claude_args_no_continue_omits_flag
+test_build_claude_args_omits_empty_permission_mode
 
 echo "== conflict-detect.sh =="
 test_foreign_conflict_detected
