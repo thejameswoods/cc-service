@@ -1,0 +1,32 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: '.'
+          severity: warning
+      - name: bash -n syntax check
+        run: |
+          set -e
+          find . -name '*.sh' -not -path './test/fixtures/*' -print0 \
+            | xargs -0 -n1 bash -n
+
+  fixture-tests:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq tmux
+      - name: Run conflict-detect / watchdog fixture tests
+        run: bash test/run-fixture-tests.sh
+      - name: Run install.sh / uninstall.sh CLI smoke tests
+        run: bash test/run-cli-tests.sh

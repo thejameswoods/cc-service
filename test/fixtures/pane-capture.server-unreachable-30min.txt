@@ -1,0 +1,4 @@
+● could not reach the Remote Control server for about 30 minutes. Run /remote-control to
+  reconnect.
+
+❯

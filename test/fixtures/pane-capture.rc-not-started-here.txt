@@ -1,0 +1,8 @@
+Welcome back.
+
+● Remote Control not started here · another Claude Code on this machine (started 1m ago)
+  already has Remote Control for this conversation, so this terminal can't see your
+  sessions on other machines and they can't reach it · run /remote-control to move it
+  to this terminal
+
+❯

@@ -1,0 +1,6 @@
+Resuming conversation...
+
+● Couldn't reconnect to your Remote Control session. Run /remote-control to retry the
+  connection, or start a new session with claude --remote-control to create a new one.
+
+❯

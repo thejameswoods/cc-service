@@ -1,0 +1,2 @@
+  5306  5305 bash    /bin/bash /usr/local/bin/claude-daemon.sh
+  5311  5306 claude  claude --continue --permission-mode auto --name claude-workstation-01

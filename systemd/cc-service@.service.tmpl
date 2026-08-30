@@ -1,0 +1,28 @@
+[Unit]
+Description=cc-service always-on Claude Code daemon (%i)
+Documentation=https://github.com/thejameswoods/cc-service
+After=network-online.target
+Wants=network-online.target
+# Do NOT rate-limit restarts (default systemd burst window would give up
+# and leave the daemon dead during a flapping network/outage). RestartSec
+# below still throttles the actual retry pace.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User={{RUN_AS_USER}}
+Environment=HOME={{RUN_AS_HOME}}
+Environment=CC_CONFIG_PATH=/etc/cc-service/%i.env
+WorkingDirectory={{CC_PROJECT_DIR}}
+ExecStart=/usr/bin/tmux new-session -A -s {{CC_TMUX_SESSION}} -x 220 -y 50 {{INSTALL_DIR}}/current/bin/claude-daemon.sh
+ExecStop=/usr/bin/tmux kill-session -t {{CC_TMUX_SESSION}}
+Restart=always
+RestartSec=5
+
+# Deliberately light-touch hardening: the daemon runs `claude`, whose tool
+# calls need broad filesystem access within the operator's project(s), so
+# ProtectSystem/ProtectHome are left off rather than fighting the workload.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,4 @@
+cc-service@default.service                 enabled
+cc-service-watchdog@default.service         enabled
+cron.service                                enabled
+ssh.service                                 enabled

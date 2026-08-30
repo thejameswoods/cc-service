@@ -1,0 +1,19 @@
+[Unit]
+Description=cc-service Remote Control watchdog (%i)
+Documentation=https://github.com/thejameswoods/cc-service
+After=cc-service@%i.service
+Requisite=cc-service@%i.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User={{RUN_AS_USER}}
+Environment=HOME={{RUN_AS_HOME}}
+Environment=CC_CONFIG_PATH=/etc/cc-service/%i.env
+ExecStart={{INSTALL_DIR}}/current/bin/claude-rc-watchdog.sh
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

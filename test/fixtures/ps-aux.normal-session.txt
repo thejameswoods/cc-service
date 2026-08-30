@@ -1,0 +1,2 @@
+ 14122 14119 bash    -bash
+ 14264 14122 claude  claude --dangerously-skip-permissions

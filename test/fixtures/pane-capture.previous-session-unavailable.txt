@@ -1,0 +1,3 @@
+● Previous session is unavailable — run /remote-control to start a new one
+
+❯

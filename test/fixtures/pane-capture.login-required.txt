@@ -1,0 +1,3 @@
+● Remote Control requires a claude.ai subscription. Please run /login to authenticate.
+
+❯
