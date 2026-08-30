@@ -9,12 +9,18 @@ Wants=network-online.target
 StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+# Type=forking, not simple: tmux new-session in the foreground needs a
+# controlling TTY, which doesn't exist under systemd ("open terminal
+# failed: not a terminal") -- confirmed by a live install attempt during
+# development. -d detaches immediately after creating the session, which
+# is exactly the fork-and-exit shape Type=forking expects; systemd tracks
+# the real daemon process via the unit's cgroup.
+Type=forking
 User={{RUN_AS_USER}}
 Environment=HOME={{RUN_AS_HOME}}
 Environment=CC_CONFIG_PATH=/etc/cc-service/%i.env
 WorkingDirectory={{CC_PROJECT_DIR}}
-ExecStart=/usr/bin/tmux new-session -A -s {{CC_TMUX_SESSION}} -x 220 -y 50 {{INSTALL_DIR}}/current/bin/claude-daemon.sh
+ExecStart=/usr/bin/tmux new-session -d -s {{CC_TMUX_SESSION}} -x 220 -y 50 {{INSTALL_DIR}}/current/bin/claude-daemon.sh
 ExecStop=/usr/bin/tmux kill-session -t {{CC_TMUX_SESSION}}
 Restart=always
 RestartSec=5
