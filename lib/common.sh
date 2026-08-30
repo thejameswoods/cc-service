@@ -27,7 +27,11 @@ log() {
   line="[$ts] [$level] [${CC_INSTANCE_NAME:-cc-service}] $msg"
   echo "$line" >&2
   if [ -n "${CC_LOG_FILE:-}" ]; then
-    echo "$line" >> "$CC_LOG_FILE" 2>/dev/null || true
+    # Braced so a failed >> redirection (e.g. missing directory) is caught
+    # by this group's own 2>/dev/null rather than leaking to the caller's
+    # stderr -- bash reports a failed redirection on the *pre-redirection*
+    # stderr if the suppression is only on the inner command.
+    { echo "$line" >> "$CC_LOG_FILE"; } 2>/dev/null || true
   fi
 }
 

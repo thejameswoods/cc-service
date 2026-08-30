@@ -207,6 +207,17 @@ ensure_service_user() {
   [ -n "$RUN_AS_HOME" ] || fail "could not determine home directory for user '$RUN_AS_USER'"
 }
 
+ensure_log_dir() {
+  # /var/log/cc-service needs root to create, but the daemon/watchdog run
+  # as RUN_AS_USER (non-root) and can't create it themselves on first boot
+  # -- confirmed by a live install where logging silently failed with
+  # "No such file or directory" because of exactly this. install.sh runs
+  # as root, so it creates and hands over ownership here.
+  local log_dir="/var/log/cc-service"
+  run_or_dry "create $log_dir owned by $RUN_AS_USER" mkdir -p "$log_dir"
+  $DRY_RUN || chown "$RUN_AS_USER" "$log_dir" 2>/dev/null || true
+}
+
 install_files() {
   local release_id
   if [ -d "$SCRIPT_DIR/.git" ] && command -v git >/dev/null 2>&1; then
@@ -229,11 +240,23 @@ write_config() {
   run_or_dry "write config to $CONFIG_PATH" true
   $DRY_RUN && return 0
   mkdir -p "$(dirname "$CONFIG_PATH")"
+  # Default --name disambiguates multiple instances on one host: plain
+  # $HOSTNAME for the common single-instance case, $HOSTNAME-<instance>
+  # otherwise -- otherwise a second instance would silently share its
+  # Remote Control display name with an unrelated one (e.g. production),
+  # confirmed by a live install where a "default"-less second instance
+  # rendered CC_CLAUDE_NAME identical to the box's existing daemon.
+  local default_claude_name
+  if [ "$SERVICE_NAME" = "default" ]; then
+    default_claude_name='${HOSTNAME}'
+  else
+    default_claude_name="\${HOSTNAME}-$SERVICE_NAME"
+  fi
   cat > "$CONFIG_PATH" <<EOF
 CC_INSTANCE_NAME="$SERVICE_NAME"
 CC_PROJECT_DIR="$PROJECT_DIR"
 CC_TMUX_SESSION="$TMUX_SESSION"
-CC_CLAUDE_NAME="\${HOSTNAME:-$SERVICE_NAME}"
+CC_CLAUDE_NAME="$default_claude_name"
 CC_PERMISSION_MODE="$PERMISSION_MODE"
 CC_CRED_HOOK="$CRED_HOOK"
 CC_STARTUP_DELAY_SEC=$STARTUP_DELAY
@@ -356,6 +379,7 @@ main() {
 
   ensure_service_user
   run_conflict_scan_and_resolve
+  ensure_log_dir
   install_files
   write_config
   merge_remote_control_setting
