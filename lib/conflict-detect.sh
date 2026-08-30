@@ -74,9 +74,9 @@ scan_loop_processes() {
 #     our own previous install) is decided by the caller. ---
 scan_tmux_name_collision() {
   local intended="$1"
-  if "$CC_TMUX_CMD" has-session -t "$intended" 2>/dev/null; then
+  if tmux_run has-session -t "$intended" 2>/dev/null; then
     local owning_pid
-    owning_pid=$("$CC_TMUX_CMD" list-panes -t "$intended" -F '#{pane_pid}' 2>/dev/null | head -1)
+    owning_pid=$(tmux_run list-panes -t "$intended" -F '#{pane_pid}' 2>/dev/null | head -1)
     echo "TMUX_NAME|$intended|pane_pid=$owning_pid"
   fi
 }

@@ -81,10 +81,19 @@ CC_PS_CMD="${CC_PS_CMD:-ps}"
 # nothing in its own cgroup and marks the unit "deactivated" instantly,
 # looping forever. A dedicated socket makes every instance its own server.
 tmux_run() {
-  if [ -n "${CC_TMUX_SOCKET:-}" ]; then
-    "$CC_TMUX_CMD" -L "$CC_TMUX_SOCKET" "$@"
+  local args=()
+  [ -n "${CC_TMUX_SOCKET:-}" ] && args+=(-L "$CC_TMUX_SOCKET")
+  # install.sh/uninstall.sh run as root, but a per-user tmux socket (the
+  # default, or any -L name) lives under /tmp/tmux-<uid> for the UID that
+  # started the server -- root looking for it without switching to that
+  # user checks /tmp/tmux-0/... instead and always finds nothing, even
+  # when the session is right there. Confirmed live: verify_install and
+  # the conflict scanner's tmux-collision check both silently failed this
+  # way until CC_TMUX_RUN_AS_USER was threaded through here.
+  if [ -n "${CC_TMUX_RUN_AS_USER:-}" ] && [ "$(id -u)" = "0" ]; then
+    sudo -u "$CC_TMUX_RUN_AS_USER" "$CC_TMUX_CMD" "${args[@]}" "$@"
   else
-    "$CC_TMUX_CMD" "$@"
+    "$CC_TMUX_CMD" "${args[@]}" "$@"
   fi
 }
 

@@ -68,16 +68,21 @@ remove_instance() {
   local watchdog_unit="cc-service-watchdog@$name.service"
   local config_file="$CONFIG_DIR/$name.env"
 
-  local tmux_session="" tmux_socket=""
+  local tmux_session="" tmux_socket="" run_as_user=""
   if [ -f "$config_file" ]; then
     tmux_session=$(grep -E '^CC_TMUX_SESSION=' "$config_file" | head -1 | cut -d'"' -f2)
     tmux_socket=$(grep -E '^CC_TMUX_SOCKET=' "$config_file" | head -1 | cut -d'"' -f2)
   fi
-  # Each instance owns a dedicated tmux socket (see lib/common.sh's
-  # tmux_run) -- set it here so tmux_session_exists/tmux_run target the
-  # right server, not the OS user's default one.
+  # Read the owning user from the unit file (before it's removed below) so
+  # the tmux teardown check runs as that user, not root -- tmux sockets
+  # are per-uid, and root checking without switching users always finds
+  # nothing, even when the session is right there. See lib/common.sh's
+  # tmux_run for the full explanation.
+  [ -f "$UNIT_DIR/$unit" ] && run_as_user=$(grep -E '^User=' "$UNIT_DIR/$unit" | head -1 | cut -d= -f2)
   # shellcheck disable=SC2034  # consumed by tmux_run() in lib/common.sh, a separately sourced file
   CC_TMUX_SOCKET="$tmux_socket"
+  # shellcheck disable=SC2034
+  CC_TMUX_RUN_AS_USER="$run_as_user"
 
   run_or_dry "disable+stop $watchdog_unit" "$CC_SYSTEMCTL_CMD" disable --now "$watchdog_unit"
   run_or_dry "disable+stop $unit" "$CC_SYSTEMCTL_CMD" disable --now "$unit"

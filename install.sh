@@ -139,7 +139,7 @@ remove_foreign_conflicts() {
     done <<<"$CC_SCAN_LOOP_PROCS"
   fi
   if [ -n "$CC_SCAN_TMUX_COLLISION" ] && tmux_session_exists "$TMUX_SESSION"; then
-    run_or_dry "kill tmux session $TMUX_SESSION" "$CC_TMUX_CMD" kill-session -t "$TMUX_SESSION"
+    run_or_dry "kill tmux session $TMUX_SESSION" tmux_run kill-session -t "$TMUX_SESSION"
   fi
 }
 
@@ -205,6 +205,15 @@ ensure_service_user() {
   id "$RUN_AS_USER" >/dev/null 2>&1 || fail "user '$RUN_AS_USER' does not exist; create it first or pass --user"
   RUN_AS_HOME=$(getent passwd "$RUN_AS_USER" | cut -d: -f6)
   [ -n "$RUN_AS_HOME" ] || fail "could not determine home directory for user '$RUN_AS_USER'"
+  # install.sh runs as root, but tmux sockets are per-uid -- root checking
+  # for a session without switching to RUN_AS_USER always finds nothing,
+  # even when it's right there. Assumes any foreign always-on daemon this
+  # scan detects also runs as RUN_AS_USER, which is the common case (and
+  # true of the reference setup this package generalizes); a foreign
+  # daemon running as a different user won't be visible to the tmux
+  # collision check. Set before the conflict scan so it benefits too.
+  # shellcheck disable=SC2034  # consumed by tmux_run() in lib/common.sh, a separately sourced file
+  CC_TMUX_RUN_AS_USER="$RUN_AS_USER"
 }
 
 ensure_log_dir() {
