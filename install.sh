@@ -392,6 +392,7 @@ main() {
   # dedicated tmux socket -- see the tmux_run comment in lib/common.sh for
   # why sharing the OS user's default server breaks Type=forking.
   TMUX_SOCKET="cc-service-$SERVICE_NAME"
+  # shellcheck disable=SC2034  # consumed by tmux_run() in lib/common.sh, a separately sourced file
   CC_TMUX_SOCKET="$TMUX_SOCKET"
   ensure_log_dir
   install_files

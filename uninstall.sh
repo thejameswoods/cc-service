@@ -76,6 +76,7 @@ remove_instance() {
   # Each instance owns a dedicated tmux socket (see lib/common.sh's
   # tmux_run) -- set it here so tmux_session_exists/tmux_run target the
   # right server, not the OS user's default one.
+  # shellcheck disable=SC2034  # consumed by tmux_run() in lib/common.sh, a separately sourced file
   CC_TMUX_SOCKET="$tmux_socket"
 
   run_or_dry "disable+stop $watchdog_unit" "$CC_SYSTEMCTL_CMD" disable --now "$watchdog_unit"
