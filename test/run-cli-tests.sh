@@ -101,11 +101,39 @@ test_uninstall_dry_run() {
   fi
 }
 
+test_install_web_requires_password_file() {
+  local out rc
+  out=$(PATH="$(make_stub_path):$PATH" bash "$ROOT_DIR/install.sh" \
+          --project-dir /tmp --service-name citest --web --dry-run --yes 2>&1)
+  rc=$?
+  if [ "$rc" -eq 2 ] && [[ "$out" == *"--web requires --web-password-file"* ]]; then
+    pass "install.sh --web without --web-password-file fails fast with exit 2"
+  else
+    test_fail "expected exit 2 + message; got rc=$rc out=$out"
+  fi
+}
+
+test_install_web_dry_run() {
+  local out rc
+  out=$(PATH="$(make_stub_path):$PATH" bash "$ROOT_DIR/install.sh" \
+          --project-dir /tmp --service-name citest --tmux-session claude-citest \
+          --web --web-password-file /tmp/pw --web-bind 0.0.0.0 --web-port 9000 \
+          --dry-run --yes 2>&1)
+  rc=$?
+  if [ "$rc" -eq 0 ] && [[ "$out" == *"cc-service-web@citest.service"* ]]; then
+    pass "install.sh --web --dry-run plans the cc-service-web unit"
+  else
+    test_fail "expected exit 0 + web unit in plan; got rc=$rc out=$out"
+  fi
+}
+
 echo "== install.sh / uninstall.sh CLI smoke tests =="
 test_install_help
 test_uninstall_help
 test_install_missing_project_dir
 test_install_dry_run_no_conflicts
+test_install_web_requires_password_file
+test_install_web_dry_run
 test_uninstall_dry_run
 
 echo

@@ -119,6 +119,52 @@ Claude Code's TUI, which could be reworded in a future release. Set
 `CC_LOG_LEVEL=debug` to log the raw pane capture on every poll if self-heal
 seems to have stopped firing.
 
+## Status and login page (optional)
+
+The one failure the watchdog cannot heal is an expired or missing login, and
+fixing it normally means an SSH session. `--web` installs a small page that
+shows the instance's health and runs the login from a browser:
+
+```bash
+openssl rand -base64 24 | sudo tee /etc/cc-service/web-password >/dev/null
+sudo chown <service-user> /etc/cc-service/web-password
+sudo chmod 0400 /etc/cc-service/web-password
+sudo cat /etc/cc-service/web-password          # the password to sign in with
+sudo ./install.sh --project-dir /path/to/your/project \
+  --web --web-password-file /etc/cc-service/web-password \
+  --web-bind 0.0.0.0 --web-port 8787
+```
+
+Open `http://<host>:8787/` and sign in as `cc` with that password.
+
+- **Status:** daemon, watchdog, `claude auth status`, whether Remote Control
+  shows as active, the tail of the tmux pane and of the watchdog log. The same
+  data is at `/status.json`.
+- **Login:** *Start login* types `/login` into the daemon's own session. The
+  page then shows the sign-in link it reads off the pane and a box for the code.
+  You sign in on claude.ai in your own browser (Google sign-in works) and paste
+  the code back. The page never sees your credentials.
+- **First run on a new machine:** the session starts in Claude Code's welcome
+  wizard. The *Session* keys (Enter, Esc, arrows, 1-3, y, n) walk it: Enter for
+  the theme, `1` for a subscription login, then the link appears.
+- **Restart claude** stops the running `claude`; the daemon loop starts it
+  again with `--continue`. It interrupts any turn in progress.
+
+**Security.** The page serves plain HTTP and can type into a session that may
+be running with `--permission-mode auto`, so treat the password like a shell
+login. It needs HTTP Basic auth on every request, locks an address out after
+repeated failures, checks a per-page form token and the `Origin` header on
+every action, and refuses to start without a password of 12+ characters. It can
+only start `/login`, submit a login code (characters a code can contain, and
+only while claude is asking for one), press the listed menu keys, and restart
+`claude`; it cannot send free text. It refuses to type while claude is mid-turn.
+Bind it to `127.0.0.1` (the default) and reach it over an SSH tunnel, or to a
+trusted LAN address; do not expose it to the internet.
+
+Like the watchdog it relies on Claude Code's own wording (`Paste code here`,
+the spinner text). If a release changes it the page still shows the raw pane,
+so you can finish by hand, and `tmux attach` always works.
+
 ## Multiple instances
 
 Everything is instance-scoped via `--service-name` (default `default`) —
