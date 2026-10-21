@@ -6,6 +6,7 @@ lint:
 test:
 	bash test/run-fixture-tests.sh
 	bash test/run-cli-tests.sh
+	bash test/run-web-tests.sh
 
 install:
 	sudo ./install.sh $(ARGS)

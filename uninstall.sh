@@ -66,6 +66,7 @@ remove_instance() {
   local name="$1"
   local unit="cc-service@$name.service"
   local watchdog_unit="cc-service-watchdog@$name.service"
+  local web_unit="cc-service-web@$name.service"
   local config_file="$CONFIG_DIR/$name.env"
 
   local tmux_session="" tmux_socket="" run_as_user=""
@@ -84,8 +85,10 @@ remove_instance() {
   # shellcheck disable=SC2034
   CC_TMUX_RUN_AS_USER="$run_as_user"
 
+  run_or_dry "disable+stop $web_unit" "$CC_SYSTEMCTL_CMD" disable --now "$web_unit"
   run_or_dry "disable+stop $watchdog_unit" "$CC_SYSTEMCTL_CMD" disable --now "$watchdog_unit"
   run_or_dry "disable+stop $unit" "$CC_SYSTEMCTL_CMD" disable --now "$unit"
+  run_or_dry "remove unit file $UNIT_DIR/$web_unit" rm -f "$UNIT_DIR/$web_unit"
   run_or_dry "remove unit file $UNIT_DIR/$watchdog_unit" rm -f "$UNIT_DIR/$watchdog_unit"
   run_or_dry "remove unit file $UNIT_DIR/$unit" rm -f "$UNIT_DIR/$unit"
   run_or_dry "systemctl daemon-reload" "$CC_SYSTEMCTL_CMD" daemon-reload

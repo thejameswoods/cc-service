@@ -28,6 +28,10 @@ DRY_RUN=false
 ASSUME_YES=false
 FORCE_REMOVE_CONFLICTS=false
 WATCHDOG_ENABLED=true
+WEB_ENABLED=false
+WEB_BIND="127.0.0.1"
+WEB_PORT=8787
+WEB_PASSWORD_FILE=""
 
 usage() {
   cat <<'EOF'
@@ -46,6 +50,10 @@ Options:
   --watchdog-interval <sec>  Watchdog poll interval. Default: 60.
   --user <name>              System user to run the service as. Default: invoking user.
   --no-watchdog              Do not install the Remote Control watchdog unit.
+  --web                      Also install the status/login page (cc-service-web@<name>).
+  --web-password-file <path> File holding the page password (>= 12 chars). Required with --web.
+  --web-bind <addr>          Address the page listens on. Default: 127.0.0.1.
+  --web-port <port>          Port the page listens on. Default: 8787.
   --dry-run                  Print planned actions; make no changes.
   --yes                      Non-interactive; assume "yes" to safe prompts.
   --force-remove-conflicts   Required together with --yes to auto-remove a foreign
@@ -67,6 +75,10 @@ parse_args() {
       --watchdog-interval) WATCHDOG_INTERVAL="$2"; shift 2 ;;
       --user) RUN_AS_USER="$2"; shift 2 ;;
       --no-watchdog) WATCHDOG_ENABLED=false; shift ;;
+      --web) WEB_ENABLED=true; shift ;;
+      --web-password-file) WEB_PASSWORD_FILE="$2"; shift 2 ;;
+      --web-bind) WEB_BIND="$2"; shift 2 ;;
+      --web-port) WEB_PORT="$2"; shift 2 ;;
       --dry-run) DRY_RUN=true; shift ;;
       --yes) ASSUME_YES=true; shift ;;
       --force-remove-conflicts) FORCE_REMOVE_CONFLICTS=true; shift ;;
@@ -238,7 +250,7 @@ install_files() {
   run_or_dry "install package files to $release_dir" mkdir -p "$release_dir"
   if ! $DRY_RUN; then
     cp -r "$SCRIPT_DIR/bin" "$SCRIPT_DIR/lib" "$release_dir/"
-    chmod +x "$release_dir"/bin/*.sh
+    chmod +x "$release_dir"/bin/*.sh "$release_dir"/bin/*.py
     ln -sfn "$release_dir" "$INSTALL_DIR/current"
   else
     log info "[dry-run] would symlink $INSTALL_DIR/current -> $release_dir"
@@ -273,6 +285,10 @@ CC_STARTUP_DELAY_SEC=$STARTUP_DELAY
 CC_RESPAWN_DELAY_SEC=3
 CC_CLAUDE_EXTRA_ARGS=""
 CC_WATCHDOG_ENABLED="$WATCHDOG_ENABLED"
+CC_WEB_ENABLED="$WEB_ENABLED"
+CC_WEB_BIND="$WEB_BIND"
+CC_WEB_PORT=$WEB_PORT
+CC_WEB_PASSWORD_FILE="$WEB_PASSWORD_FILE"
 CC_WATCHDOG_INTERVAL_SEC=$WATCHDOG_INTERVAL
 CC_WATCHDOG_PANE_LINES=60
 CC_WATCHDOG_BACKOFF_BASE_SEC=30
@@ -339,6 +355,14 @@ render_systemd_units() {
   if $WATCHDOG_ENABLED; then
     render_unit "$SCRIPT_DIR/systemd/cc-service-watchdog@.service.tmpl" "$UNIT_DIR/cc-service-watchdog@$SERVICE_NAME.service"
   fi
+  if $WEB_ENABLED; then
+    render_unit "$SCRIPT_DIR/systemd/cc-service-web@.service.tmpl" "$UNIT_DIR/cc-service-web@$SERVICE_NAME.service"
+  elif [ -f "$UNIT_DIR/cc-service-web@$SERVICE_NAME.service" ]; then
+    # An upgrade without --web retires the page rather than leaving it
+    # running against a config that no longer names a password file.
+    run_or_dry "disable+stop cc-service-web@$SERVICE_NAME (--web not given)" "$CC_SYSTEMCTL_CMD" disable --now "cc-service-web@$SERVICE_NAME.service"
+    run_or_dry "remove $UNIT_DIR/cc-service-web@$SERVICE_NAME.service" rm -f "$UNIT_DIR/cc-service-web@$SERVICE_NAME.service"
+  fi
 }
 
 enable_and_start() {
@@ -352,6 +376,10 @@ enable_and_start() {
   if $WATCHDOG_ENABLED; then
     run_or_dry "enable cc-service-watchdog@$SERVICE_NAME" "$CC_SYSTEMCTL_CMD" enable "cc-service-watchdog@$SERVICE_NAME.service"
     run_or_dry "restart cc-service-watchdog@$SERVICE_NAME" "$CC_SYSTEMCTL_CMD" restart "cc-service-watchdog@$SERVICE_NAME.service"
+  fi
+  if $WEB_ENABLED; then
+    run_or_dry "enable cc-service-web@$SERVICE_NAME" "$CC_SYSTEMCTL_CMD" enable "cc-service-web@$SERVICE_NAME.service"
+    run_or_dry "restart cc-service-web@$SERVICE_NAME" "$CC_SYSTEMCTL_CMD" restart "cc-service-web@$SERVICE_NAME.service"
   fi
 }
 
@@ -384,6 +412,14 @@ verify_install() {
       ok=false
     fi
   fi
+  if $WEB_ENABLED; then
+    if wait_until 10 "web page active" "$CC_SYSTEMCTL_CMD" is-active --quiet "cc-service-web@$SERVICE_NAME.service"; then
+      log info "cc-service-web@$SERVICE_NAME.service is active"
+    else
+      log error "cc-service-web@$SERVICE_NAME.service is NOT active"
+      ok=false
+    fi
+  fi
   if wait_until 10 "tmux session up" tmux_session_exists "$TMUX_SESSION"; then
     log info "tmux session '$TMUX_SESSION' is up"
   else
@@ -393,6 +429,7 @@ verify_install() {
   echo
   echo "Logs: journalctl -u cc-service@$SERVICE_NAME -f"
   $WATCHDOG_ENABLED && echo "       journalctl -u cc-service-watchdog@$SERVICE_NAME -f"
+  $WEB_ENABLED && echo "Page:  http://$WEB_BIND:$WEB_PORT/  (user: cc)"
   echo "Attach: tmux attach -t $TMUX_SESSION   (detach with Ctrl-b d)"
   $ok || { log error "install completed with warnings above"; exit 1; }
 }
@@ -403,6 +440,12 @@ main() {
   require_cmd tmux claude "$CC_SYSTEMCTL_CMD" jq || exit 1
   if [ "$(id -u)" -ne 0 ] && ! $DRY_RUN; then
     fail "install.sh must be run as root (sudo), except with --dry-run"
+  fi
+  if $WEB_ENABLED; then
+    [ -n "$WEB_PASSWORD_FILE" ] || { echo "--web requires --web-password-file" >&2; usage; exit 2; }
+    [[ "$WEB_PORT" =~ ^[0-9]+$ ]] || { echo "--web-port must be a number" >&2; exit 2; }
+    require_cmd python3 || exit 1
+    $DRY_RUN || [ -r "$WEB_PASSWORD_FILE" ] || fail "--web-password-file is not readable: $WEB_PASSWORD_FILE"
   fi
 
   ensure_service_user

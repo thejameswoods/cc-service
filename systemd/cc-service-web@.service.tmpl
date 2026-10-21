@@ -1,0 +1,22 @@
+[Unit]
+Description=cc-service status and login page (%i)
+Documentation=https://github.com/thejameswoods/cc-service
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User={{RUN_AS_USER}}
+Environment=HOME={{RUN_AS_HOME}}
+ExecStart={{INSTALL_DIR}}/current/bin/cc-service-web.py /etc/cc-service/%i.env
+Restart=always
+RestartSec=5
+
+# Runs as the same user as the daemon: it reads that user's tmux socket and
+# `claude auth status`. PrivateTmp is deliberately off -- the tmux socket
+# lives in /tmp/tmux-<uid>.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
