@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- The daemon starts a fresh session whenever `claude --continue` reports
+  "No conversation found to continue", not only once per daemon lifetime. A new
+  install whose first claude only logged in looped on `--continue` forever and
+  never registered with Remote Control.
 - `install.sh` no longer leaves `~/.claude` root-owned when it has to create it,
   and no longer turns an existing `settings.json` into a root-owned 0600 file
   when merging `remoteControlAtStartup`. Either made `claude` unable to save

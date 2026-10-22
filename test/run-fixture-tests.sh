@@ -138,7 +138,7 @@ test_pane_patterns() {
   for f in "$FIXTURES"/pane-capture.*.txt; do
     base=$(basename "$f")
     case "$base" in
-      *normal-idle*|*mid-turn-busy*) expect=no ;;
+      *normal-idle*|*mid-turn-busy*|*no-conversation*) expect=no ;;
       *) expect=yes ;;
     esac
     matched=no
@@ -227,7 +227,24 @@ test_build_claude_args_omits_empty_permission_mode() {
   fi
 }
 
+test_no_conversation_detected() {
+  local ok=true
+  no_conversation_to_continue "$(cat "$FIXTURES/pane-capture.no-conversation.txt")" || ok=false
+  # Everything else the pane can hold must not trigger a fresh session.
+  local f
+  for f in normal-idle login-required mid-turn-busy reconnect-failed rc-not-started-here; do
+    if no_conversation_to_continue "$(cat "$FIXTURES/pane-capture.$f.txt")"; then ok=false; fi
+  done
+  if no_conversation_to_continue ""; then ok=false; fi
+  if $ok; then
+    pass "no_conversation_to_continue matches only the 'No conversation found' output"
+  else
+    test_fail "no_conversation_to_continue matched wrongly (fixture: no-conversation)"
+  fi
+}
+
 echo "== claude-daemon.sh =="
+test_no_conversation_detected
 test_build_claude_args_default_includes_continue
 test_build_claude_args_no_continue_omits_flag
 test_build_claude_args_omits_empty_permission_mode

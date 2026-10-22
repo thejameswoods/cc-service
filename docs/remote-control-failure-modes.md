@@ -25,5 +25,16 @@ to see whether wording drifted.
 | `Not logged in` | **No** | Same |
 | `Invalid API key` | **No** | Same |
 
+## Daemon: nothing to continue
+
+`bin/claude-daemon.sh` starts `claude --continue`. When the directory has no
+conversation to resume, Claude Code prints `No conversation found to continue`
+and exits 1; the daemon then starts a fresh session instead (and does so on
+every launch that fails this way, not once). The same applies to a first
+session that was only used to log in. If that wording changes, the daemon
+falls back to retrying `--continue` every few seconds, which is the loop
+visible in `/var/log/cc-service/<instance>.daemon.log`. The string is
+`NO_CONVERSATION_PATTERN` in `bin/claude-daemon.sh`.
+
 Source: [code.claude.com/docs/en/remote-control](https://code.claude.com/docs/en/remote-control),
 Troubleshooting and Limitations sections, as of Claude Code v2.1.251.
