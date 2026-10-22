@@ -33,6 +33,25 @@ build_claude_args() {
   fi
 }
 
+# Literal text Claude Code prints when `claude --continue` has no conversation
+# to resume. Keep in sync with docs/remote-control-failure-modes.md.
+NO_CONVERSATION_PATTERN='No conversation found to continue'
+
+# no_conversation_to_continue <text>: true if <text> (this run's pane output)
+# shows claude exited because there was nothing to continue.
+no_conversation_to_continue() {
+  grep -qF "$NO_CONVERSATION_PATTERN" <<<"$1"
+}
+
+# Empty this pane's screen and scrollback, so what is in the pane afterwards
+# is only the next claude run's output and a stale message from an earlier
+# run cannot be mistaken for this one's.
+clear_pane() {
+  [ -t 1 ] || return 0
+  printf '\033[3J\033[H\033[2J'
+  tmux_run clear-history -t "${CC_TMUX_SESSION:-}" 2>/dev/null || true
+}
+
 main() {
   CONFIG_PATH="${1:-${CC_CONFIG_PATH:-}}"
   [ -n "$CONFIG_PATH" ] || { echo "usage: claude-daemon.sh <config-path>  (or set CC_CONFIG_PATH)" >&2; exit 1; }
@@ -55,7 +74,7 @@ main() {
     fi
   fi
 
-  local first_launch=true bootstrapped=false
+  local first_launch=true
   while true; do
     if $first_launch; then
       local delay="${CC_STARTUP_DELAY_SEC:-15}"
@@ -67,24 +86,33 @@ main() {
     local claude_args=() exit_code
     build_claude_args claude_args
     log info "launching: claude ${claude_args[*]}"
+    clear_pane
     claude "${claude_args[@]}"
     exit_code=$?
 
-    if [ "$exit_code" -ne 0 ] && ! $bootstrapped; then
-      # --continue fails immediately with no prior conversation in this
-      # directory -- the case for every brand-new install, confirmed live:
-      # a fresh project dir looped "No conversation found to continue"
-      # forever. Fall back to a fresh session exactly once per daemon
-      # lifetime; every restart after a successful run has a conversation
-      # to continue, so this only ever fires on true first-time bootstrap.
-      log warn "claude --continue exited $exit_code; no prior conversation likely exists yet, starting a fresh session instead"
-      claude_args=()
-      build_claude_args claude_args --no-continue
-      log info "launching: claude ${claude_args[*]}"
-      claude "${claude_args[@]}"
-      exit_code=$?
+    if [ "$exit_code" -ne 0 ]; then
+      # --continue exits at once with "No conversation found to continue" when
+      # this directory has nothing to resume: every brand-new install, and a
+      # first session that was only ever used to log in. Start a fresh session
+      # then. This is decided on every launch from what claude itself printed,
+      # not once per daemon lifetime: the first claude of a new install can
+      # spend the daemon's whole first iteration in the login wizard, and a
+      # one-shot fallback was then gone when it was needed (confirmed live: the
+      # daemon looped on --continue every few seconds after the login worked).
+      # Any other failure (network, auth) keeps retrying --continue, so a real
+      # conversation is never abandoned for a fresh one.
+      local pane_text=""
+      pane_text=$(tmux_run capture-pane -p -t "${CC_TMUX_SESSION:-}" 2>/dev/null) || pane_text=""
+      if no_conversation_to_continue "$pane_text"; then
+        log warn "claude --continue exited $exit_code: no conversation to continue yet; starting a fresh session instead"
+        claude_args=()
+        build_claude_args claude_args --no-continue
+        log info "launching: claude ${claude_args[*]}"
+        clear_pane
+        claude "${claude_args[@]}"
+        exit_code=$?
+      fi
     fi
-    bootstrapped=true
 
     log warn "claude exited (code=$exit_code); respawning in ${CC_RESPAWN_DELAY_SEC:-3}s"
     sleep "${CC_RESPAWN_DELAY_SEC:-3}"
