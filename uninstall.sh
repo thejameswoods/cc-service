@@ -67,6 +67,7 @@ remove_instance() {
   local unit="cc-service@$name.service"
   local watchdog_unit="cc-service-watchdog@$name.service"
   local web_unit="cc-service-web@$name.service"
+  local terminal_unit="cc-service-terminal@$name.service"
   local config_file="$CONFIG_DIR/$name.env"
 
   local tmux_session="" tmux_socket="" run_as_user=""
@@ -85,9 +86,11 @@ remove_instance() {
   # shellcheck disable=SC2034
   CC_TMUX_RUN_AS_USER="$run_as_user"
 
+  run_or_dry "disable+stop $terminal_unit" "$CC_SYSTEMCTL_CMD" disable --now "$terminal_unit"
   run_or_dry "disable+stop $web_unit" "$CC_SYSTEMCTL_CMD" disable --now "$web_unit"
   run_or_dry "disable+stop $watchdog_unit" "$CC_SYSTEMCTL_CMD" disable --now "$watchdog_unit"
   run_or_dry "disable+stop $unit" "$CC_SYSTEMCTL_CMD" disable --now "$unit"
+  run_or_dry "remove unit file $UNIT_DIR/$terminal_unit" rm -f "$UNIT_DIR/$terminal_unit"
   run_or_dry "remove unit file $UNIT_DIR/$web_unit" rm -f "$UNIT_DIR/$web_unit"
   run_or_dry "remove unit file $UNIT_DIR/$watchdog_unit" rm -f "$UNIT_DIR/$watchdog_unit"
   run_or_dry "remove unit file $UNIT_DIR/$unit" rm -f "$UNIT_DIR/$unit"
@@ -99,6 +102,7 @@ remove_instance() {
 
   if $PURGE; then
     run_or_dry "remove config $config_file" rm -f "$config_file"
+    run_or_dry "remove TLS certificate and key" rm -f "$CONFIG_DIR/$name-tls.crt" "$CONFIG_DIR/$name-tls.key"
     run_or_dry "remove logs $LOG_DIR/$name.*" bash -c "rm -f '$LOG_DIR/$name'.*.log"
   fi
 

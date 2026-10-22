@@ -1,0 +1,21 @@
+[Unit]
+Description=cc-service browser terminal (%i)
+Documentation=https://github.com/thejameswoods/cc-service
+After=network-online.target cc-service@%i.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User={{RUN_AS_USER}}
+Environment=HOME={{RUN_AS_HOME}}
+ExecStart={{INSTALL_DIR}}/current/bin/cc-service-terminal.sh /etc/cc-service/%i.env
+Restart=always
+RestartSec=5
+
+# Same user as the daemon: it attaches to that user's tmux socket in /tmp, so
+# PrivateTmp stays off.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

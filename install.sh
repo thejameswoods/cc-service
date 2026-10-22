@@ -32,6 +32,13 @@ WEB_ENABLED=false
 WEB_BIND="127.0.0.1"
 WEB_PORT=8787
 WEB_PASSWORD_FILE=""
+TLS_ENABLED=false
+TLS_SANS=()
+TLS_CERT=""
+TLS_KEY=""
+TERMINAL_ENABLED=false
+TERMINAL_IFACE="lo"
+TERMINAL_PORT=7681
 
 usage() {
   cat <<'EOF'
@@ -54,6 +61,14 @@ Options:
   --web-password-file <path> File holding the page password (>= 12 chars). Required with --web.
   --web-bind <addr>          Address the page listens on. Default: 127.0.0.1.
   --web-port <port>          Port the page listens on. Default: 8787.
+  --tls                      Serve the page over HTTPS with a self-signed certificate (created if
+                             missing, in /etc/cc-service). Required by --terminal.
+  --tls-san <name-or-ip>     Extra name or address for the certificate. Repeatable. The host name and
+                             the --web-bind address are added automatically.
+  --terminal                 Also install a browser terminal on the session (ttyd, TLS, the page's
+                             password). Needs --web and --tls. Free text: treat it like a shell login.
+  --terminal-iface <name>    Network interface the terminal binds to (not an address). Default: lo.
+  --terminal-port <port>     Port the terminal listens on. Default: 7681.
   --dry-run                  Print planned actions; make no changes.
   --yes                      Non-interactive; assume "yes" to safe prompts.
   --force-remove-conflicts   Required together with --yes to auto-remove a foreign
@@ -79,6 +94,11 @@ parse_args() {
       --web-password-file) WEB_PASSWORD_FILE="$2"; shift 2 ;;
       --web-bind) WEB_BIND="$2"; shift 2 ;;
       --web-port) WEB_PORT="$2"; shift 2 ;;
+      --tls) TLS_ENABLED=true; shift ;;
+      --tls-san) TLS_SANS+=("$2"); shift 2 ;;
+      --terminal) TERMINAL_ENABLED=true; shift ;;
+      --terminal-iface) TERMINAL_IFACE="$2"; shift 2 ;;
+      --terminal-port) TERMINAL_PORT="$2"; shift 2 ;;
       --dry-run) DRY_RUN=true; shift ;;
       --yes) ASSUME_YES=true; shift ;;
       --force-remove-conflicts) FORCE_REMOVE_CONFLICTS=true; shift ;;
@@ -257,6 +277,39 @@ install_files() {
   fi
 }
 
+generate_tls_cert() {
+  $TLS_ENABLED || return 0
+  if $DRY_RUN; then
+    log info "[dry-run] would ensure a self-signed TLS certificate at $TLS_CERT"
+    return 0
+  fi
+  require_cmd openssl || fail "openssl is required for --tls"
+  mkdir -p "$CONFIG_DIR"
+  if [ -s "$TLS_CERT" ] && [ -s "$TLS_KEY" ]; then
+    log info "TLS certificate already present at $TLS_CERT; leaving it (delete both files to regenerate)"
+  else
+    local host fqdn sans san
+    host=$(hostname)
+    sans="DNS:localhost,IP:127.0.0.1,DNS:$host"
+    fqdn=$(hostname -f 2>/dev/null || true)
+    if [ -n "$fqdn" ] && [ "$fqdn" != "$host" ]; then sans+=",DNS:$fqdn"; fi
+    if [[ "$WEB_BIND" =~ ^[0-9]+(\.[0-9]+){3}$ ]] && [ "$WEB_BIND" != "0.0.0.0" ]; then sans+=",IP:$WEB_BIND"; fi
+    for san in ${TLS_SANS[@]+"${TLS_SANS[@]}"}; do
+      if [[ "$san" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then sans+=",IP:$san"; else sans+=",DNS:$san"; fi
+    done
+    log info "creating a self-signed TLS certificate at $TLS_CERT (names: $sans)"
+    ( umask 077
+      openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 \
+        -subj "/CN=$host" -addext "subjectAltName=$sans" \
+        -keyout "$TLS_KEY" -out "$TLS_CERT" 2>/dev/null ) \
+      || fail "openssl could not create the TLS certificate"
+  fi
+  # The services run as the service user, not root.
+  chown "$RUN_AS_USER:$(id -gn "$RUN_AS_USER")" "$TLS_KEY" "$TLS_CERT" 2>/dev/null || true
+  chmod 0400 "$TLS_KEY"
+  chmod 0444 "$TLS_CERT"
+}
+
 write_config() {
   run_or_dry "write config to $CONFIG_PATH" true
   $DRY_RUN && return 0
@@ -289,6 +342,11 @@ CC_WEB_ENABLED="$WEB_ENABLED"
 CC_WEB_BIND="$WEB_BIND"
 CC_WEB_PORT=$WEB_PORT
 CC_WEB_PASSWORD_FILE="$WEB_PASSWORD_FILE"
+CC_TLS_CERT="$TLS_CERT"
+CC_TLS_KEY="$TLS_KEY"
+CC_TERMINAL_ENABLED="$TERMINAL_ENABLED"
+CC_TERMINAL_IFACE="$TERMINAL_IFACE"
+CC_TERMINAL_PORT=$TERMINAL_PORT
 CC_WATCHDOG_INTERVAL_SEC=$WATCHDOG_INTERVAL
 CC_WATCHDOG_PANE_LINES=60
 CC_WATCHDOG_BACKOFF_BASE_SEC=30
@@ -376,6 +434,12 @@ render_systemd_units() {
     run_or_dry "disable+stop cc-service-web@$SERVICE_NAME (--web not given)" "$CC_SYSTEMCTL_CMD" disable --now "cc-service-web@$SERVICE_NAME.service"
     run_or_dry "remove $UNIT_DIR/cc-service-web@$SERVICE_NAME.service" rm -f "$UNIT_DIR/cc-service-web@$SERVICE_NAME.service"
   fi
+  if $TERMINAL_ENABLED; then
+    render_unit "$SCRIPT_DIR/systemd/cc-service-terminal@.service.tmpl" "$UNIT_DIR/cc-service-terminal@$SERVICE_NAME.service"
+  elif [ -f "$UNIT_DIR/cc-service-terminal@$SERVICE_NAME.service" ]; then
+    run_or_dry "disable+stop cc-service-terminal@$SERVICE_NAME (--terminal not given)" "$CC_SYSTEMCTL_CMD" disable --now "cc-service-terminal@$SERVICE_NAME.service"
+    run_or_dry "remove $UNIT_DIR/cc-service-terminal@$SERVICE_NAME.service" rm -f "$UNIT_DIR/cc-service-terminal@$SERVICE_NAME.service"
+  fi
 }
 
 enable_and_start() {
@@ -393,6 +457,10 @@ enable_and_start() {
   if $WEB_ENABLED; then
     run_or_dry "enable cc-service-web@$SERVICE_NAME" "$CC_SYSTEMCTL_CMD" enable "cc-service-web@$SERVICE_NAME.service"
     run_or_dry "restart cc-service-web@$SERVICE_NAME" "$CC_SYSTEMCTL_CMD" restart "cc-service-web@$SERVICE_NAME.service"
+  fi
+  if $TERMINAL_ENABLED; then
+    run_or_dry "enable cc-service-terminal@$SERVICE_NAME" "$CC_SYSTEMCTL_CMD" enable "cc-service-terminal@$SERVICE_NAME.service"
+    run_or_dry "restart cc-service-terminal@$SERVICE_NAME" "$CC_SYSTEMCTL_CMD" restart "cc-service-terminal@$SERVICE_NAME.service"
   fi
 }
 
@@ -433,6 +501,14 @@ verify_install() {
       ok=false
     fi
   fi
+  if $TERMINAL_ENABLED; then
+    if wait_until 10 "terminal active" "$CC_SYSTEMCTL_CMD" is-active --quiet "cc-service-terminal@$SERVICE_NAME.service"; then
+      log info "cc-service-terminal@$SERVICE_NAME.service is active"
+    else
+      log error "cc-service-terminal@$SERVICE_NAME.service is NOT active"
+      ok=false
+    fi
+  fi
   if wait_until 10 "tmux session up" tmux_session_exists "$TMUX_SESSION"; then
     log info "tmux session '$TMUX_SESSION' is up"
   else
@@ -442,7 +518,12 @@ verify_install() {
   echo
   echo "Logs: journalctl -u cc-service@$SERVICE_NAME -f"
   $WATCHDOG_ENABLED && echo "       journalctl -u cc-service-watchdog@$SERVICE_NAME -f"
-  $WEB_ENABLED && echo "Page:  http://$WEB_BIND:$WEB_PORT/  (user: cc)"
+  if $WEB_ENABLED; then
+    local scheme=http
+    $TLS_ENABLED && scheme=https
+    echo "Page:  $scheme://$WEB_BIND:$WEB_PORT/  (user: cc)"
+  fi
+  $TERMINAL_ENABLED && echo "Terminal: https://<host>:$TERMINAL_PORT/  (interface $TERMINAL_IFACE, same user and password)"
   echo "Attach: tmux attach -t $TMUX_SESSION   (detach with Ctrl-b d)"
   $ok || { log error "install completed with warnings above"; exit 1; }
 }
@@ -460,6 +541,13 @@ main() {
     require_cmd python3 || exit 1
     $DRY_RUN || [ -r "$WEB_PASSWORD_FILE" ] || fail "--web-password-file is not readable: $WEB_PASSWORD_FILE"
   fi
+  if $TERMINAL_ENABLED; then
+    # It shares the page's password, so the page must not send that in clear.
+    $WEB_ENABLED || { echo "--terminal requires --web (it shares the page's password)" >&2; exit 2; }
+    $TLS_ENABLED || { echo "--terminal requires --tls" >&2; exit 2; }
+    [[ "$TERMINAL_PORT" =~ ^[0-9]+$ ]] || { echo "--terminal-port must be a number" >&2; exit 2; }
+    $DRY_RUN || require_cmd ttyd || exit 1
+  fi
 
   ensure_service_user
   run_conflict_scan_and_resolve
@@ -468,10 +556,15 @@ main() {
   # dedicated tmux socket -- see the tmux_run comment in lib/common.sh for
   # why sharing the OS user's default server breaks Type=forking.
   TMUX_SOCKET="cc-service-$SERVICE_NAME"
+  if $TLS_ENABLED; then
+    TLS_CERT="$CONFIG_DIR/$SERVICE_NAME-tls.crt"
+    TLS_KEY="$CONFIG_DIR/$SERVICE_NAME-tls.key"
+  fi
   # shellcheck disable=SC2034  # consumed by tmux_run() in lib/common.sh, a separately sourced file
   CC_TMUX_SOCKET="$TMUX_SOCKET"
   ensure_log_dir
   install_files
+  generate_tls_cert
   write_config
   merge_remote_control_setting
   render_systemd_units
