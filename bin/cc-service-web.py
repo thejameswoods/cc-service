@@ -371,7 +371,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Referrer-Policy", "no-referrer")
+        # same-origin, not no-referrer: with no-referrer browsers send "Origin: null"
+        # on form posts, which the cross-origin check in do_POST would then refuse.
+        # Nothing is sent to other sites either way.
+        self.send_header("Referrer-Policy", "same-origin")
         self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
