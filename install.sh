@@ -314,7 +314,15 @@ merge_remote_control_setting() {
 
   if [ ! -f "$settings_file" ]; then
     log warn "$settings_file does not exist; creating minimal one with remoteControlAtStartup=true"
-    mkdir -p "$(dirname "$settings_file")"
+    local settings_dir
+    settings_dir=$(dirname "$settings_file")
+    if [ ! -d "$settings_dir" ]; then
+      # install.sh runs as root, so a directory created here is root-owned.
+      # claude then cannot write .credentials.json into it and the login
+      # fails with "credentials could not be saved". Hand it to the user.
+      mkdir -p "$settings_dir"
+      chown "$RUN_AS_USER:$(id -gn "$RUN_AS_USER")" "$settings_dir" 2>/dev/null || true
+    fi
     echo '{"remoteControlAtStartup": true}' > "$settings_file"
     chown "$RUN_AS_USER" "$settings_file" 2>/dev/null || true
     return 0
@@ -327,7 +335,12 @@ merge_remote_control_setting() {
 
   local tmp
   tmp=$(mktemp)
-  jq '.remoteControlAtStartup = true' "$settings_file" > "$tmp" && mv "$tmp" "$settings_file"
+  # mktemp makes a root-owned 0600 file; keep the original's owner and mode,
+  # or the user's own settings.json becomes unreadable to them after the mv.
+  jq '.remoteControlAtStartup = true' "$settings_file" > "$tmp" \
+    && chown --reference="$settings_file" "$tmp" \
+    && chmod --reference="$settings_file" "$tmp" \
+    && mv "$tmp" "$settings_file"
   log info "set remoteControlAtStartup=true in $settings_file (all other keys preserved)"
 }
 

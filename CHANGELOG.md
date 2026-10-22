@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `install.sh` no longer leaves `~/.claude` root-owned when it has to create it,
+  and no longer turns an existing `settings.json` into a root-owned 0600 file
+  when merging `remoteControlAtStartup`. Either made `claude` unable to save
+  its login ("credentials could not be saved to the credentials file").
+
 ### Added
 - Optional status and login page (`install.sh --web`, `bin/cc-service-web.py`,
   `cc-service-web@.service`): shows daemon, watchdog, login and Remote Control
