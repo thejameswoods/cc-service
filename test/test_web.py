@@ -244,6 +244,18 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(self.h.tmux_calls(), [])
 
+    def test_post_accepts_same_origin(self):
+        # Browsers send the page's own origin on form posts.
+        status, _, _ = self.h.request(
+            "/login", "POST", "csrf=" + self.h.token(),
+            headers={"Origin": "http://127.0.0.1:%d" % self.h.port, "Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(status, 303)
+
+    def test_referrer_policy_lets_browsers_send_origin(self):
+        # "no-referrer" makes browsers send "Origin: null" on form posts.
+        _, _, headers = self.h.request("/")
+        self.assertEqual(headers["Referrer-Policy"], "same-origin")
+
     def test_start_login_types_slash_login(self):
         status, _, _ = self.h.post("/login")
         self.assertEqual(status, 303)
