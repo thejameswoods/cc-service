@@ -7,6 +7,8 @@ import base64
 import importlib.util
 import os
 import re
+import socket
+import ssl
 import stat
 import subprocess
 import tempfile
@@ -62,8 +64,20 @@ def write_exec(path, text):
     os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
 
 
+def make_cert(directory):
+    """A throwaway self-signed certificate and key; returns (cert, key) paths."""
+    cert, key = os.path.join(directory, "tls.crt"), os.path.join(directory, "tls.key")
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+         "-days", "2", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+         "-keyout", key, "-out", cert],
+        check=True, capture_output=True)
+    return cert, key
+
+
 class Harness:
-    def __init__(self, test):
+    def __init__(self, test, tls=False, terminal=False):
+        self.scheme = "https" if tls else "http"
         self.dir = tempfile.mkdtemp()
         test.addCleanup(self.cleanup)
         d = self.dir
@@ -87,11 +101,17 @@ class Harness:
         self.env_backup = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
         test.addCleanup(self.restore_env)
-        self.cfg = ccweb.Config({
+        env_file = {
             "CC_INSTANCE_NAME": "t", "CC_TMUX_SESSION": "claude", "CC_TMUX_SOCKET": "sock",
             "CC_WEB_BIND": "127.0.0.1", "CC_WEB_PORT": "0", "CC_WEB_PASSWORD_FILE": self.pwfile,
             "CC_LOG_DIR": d,
-        })
+        }
+        if tls:
+            env_file["CC_TLS_CERT"], env_file["CC_TLS_KEY"] = make_cert(d)
+        if terminal:
+            env_file["CC_TERMINAL_ENABLED"] = "true"
+            env_file["CC_TERMINAL_PORT"] = "7681"
+        self.cfg = ccweb.Config(env_file)
         # The busy/quiet check sleeps a real second; keep the suite quick.
         self.server = ccweb.make_server(self.cfg, self.cfg.load_password())
         self.port = self.server.server_address[1]
@@ -123,7 +143,7 @@ class Harness:
             return [line.strip() for line in fh if "send-keys" in line]
 
     def request(self, path, method="GET", data=None, auth=True, headers=None):
-        req = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path), method=method,
+        req = urllib.request.Request("%s://127.0.0.1:%d%s" % (self.scheme, self.port, path), method=method,
                                      data=data.encode() if data is not None else None)
         if auth is True:
             req.add_header("Authorization", "Basic " + base64.b64encode(("cc:" + PASSWORD).encode()).decode())
@@ -135,7 +155,13 @@ class Harness:
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, *a, **kw):
                 return None
-        opener = urllib.request.build_opener(NoRedirect)
+        handlers = [NoRedirect]
+        if self.scheme == "https":
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE  # the test certificate is self-signed
+            handlers.append(urllib.request.HTTPSHandler(context=ctx))
+        opener = urllib.request.build_opener(*handlers)
         try:
             with opener.open(req, timeout=15) as resp:
                 return resp.status, resp.read().decode(), resp.headers
@@ -310,6 +336,60 @@ class ServerTests(unittest.TestCase):
         while time.time() < deadline and subprocess.run(["pgrep", "-P", str(parent.pid)], capture_output=True).returncode == 0:
             time.sleep(0.1)
         self.assertNotEqual(subprocess.run(["pgrep", "-P", str(parent.pid)], capture_output=True).returncode, 0)
+
+
+class TLSTests(unittest.TestCase):
+    def setUp(self):
+        self.h = Harness(self, tls=True)
+
+    def test_serves_https_and_still_needs_auth(self):
+        self.assertEqual(self.h.request("/", auth=False)[0], 401)
+        status, body, _ = self.h.request("/")
+        self.assertEqual(status, 200)
+        self.assertIn("cc-service", body)
+
+    def test_actions_work_over_https(self):
+        # Same-origin check must hold with an https Origin.
+        status, _, _ = self.h.request(
+            "/login", "POST", "csrf=" + self.h.token(),
+            headers={"Origin": "https://127.0.0.1:%d" % self.h.port, "Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(status, 303)
+
+    def test_plain_http_to_the_https_port_is_dropped_and_server_survives(self):
+        with socket.create_connection(("127.0.0.1", self.h.port), timeout=5) as s:
+            s.sendall(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+            try:
+                data = s.recv(200)
+            except (ConnectionResetError, socket.timeout):
+                data = b""
+        self.assertNotIn(b"200 OK", data)
+        self.assertEqual(self.h.request("/")[0], 200)
+
+    def test_silent_connection_does_not_block_other_clients(self):
+        # The handshake happens in the handler thread, not in accept().
+        with socket.create_connection(("127.0.0.1", self.h.port), timeout=5):
+            self.assertEqual(self.h.request("/")[0], 200)
+
+    def test_cert_without_key_is_refused(self):
+        cfg = ccweb.Config({"CC_WEB_PASSWORD_FILE": self.h.pwfile, "CC_WEB_PORT": "0", "CC_TLS_CERT": "/nonexistent.crt"})
+        with self.assertRaises(SystemExit):
+            ccweb.make_server(cfg, PASSWORD)
+
+    def test_unreadable_cert_is_refused(self):
+        cfg = ccweb.Config({"CC_WEB_PASSWORD_FILE": self.h.pwfile, "CC_WEB_PORT": "0",
+                            "CC_TLS_CERT": "/nonexistent.crt", "CC_TLS_KEY": "/nonexistent.key"})
+        with self.assertRaises(SystemExit):
+            ccweb.make_server(cfg, PASSWORD)
+
+
+class TerminalLinkTests(unittest.TestCase):
+    def test_link_shown_only_when_enabled(self):
+        on = Harness(self, tls=True, terminal=True)
+        _, body, _ = on.request("/")
+        self.assertIn("https://127.0.0.1:7681/", body)
+        off = Harness(self, tls=True)
+        _, body, _ = off.request("/")
+        self.assertNotIn(":7681", body)
 
 
 def urllib_unquote(s):

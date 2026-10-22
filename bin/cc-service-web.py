@@ -27,6 +27,7 @@ import os
 import re
 import secrets
 import signal
+import ssl
 import subprocess
 import sys
 import threading
@@ -99,6 +100,12 @@ class Config:
         self.bind = env.get("CC_WEB_BIND", "127.0.0.1")
         self.port = int(env.get("CC_WEB_PORT", "8787"))
         self.password_file = env.get("CC_WEB_PASSWORD_FILE", "")
+        # TLS: both set => serve HTTPS. The browser terminal (ttyd) needs it, and
+        # the page shares its password, so the page must not send that in clear.
+        self.tls_cert = env.get("CC_TLS_CERT", "")
+        self.tls_key = env.get("CC_TLS_KEY", "")
+        self.terminal_enabled = env.get("CC_TERMINAL_ENABLED", "false") == "true"
+        self.terminal_port = int(env.get("CC_TERMINAL_PORT", "7681"))
         self.log_dir = env.get("CC_LOG_DIR", "/var/log/cc-service")
         self.pane_lines = int(env.get("CC_WATCHDOG_PANE_LINES", "60"))
         # Indirected like the shell scripts' CC_*_CMD, so tests can stub them.
@@ -307,6 +314,7 @@ def state_class(state):
 class Handler(http.server.BaseHTTPRequestHandler):
     server_version = "cc-service-web"
     sys_version = ""
+    timeout = 30  # a stalled client (or TLS handshake) must not hold a thread forever
 
     # Set by serve().
     inst = None
@@ -459,6 +467,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "<button%s>%s</button></form>" % (action, self._csrf_token(), fields, cls, html.escape(label))
         )
 
+    def _terminal_section(self):
+        cfg = self.inst.cfg
+        if not cfg.terminal_enabled:
+            return ""
+        host = urllib.parse.urlsplit("//" + self.headers.get("Host", "")).hostname or ""
+        url = "https://%s:%d/" % (host, cfg.terminal_port)
+        return (
+            '<section><h2>Terminal</h2><p class="small">A real terminal attached to the running session, '
+            'with the same password. It accepts free text, so it can instruct the agent. '
+            'The certificate is self-signed; your browser will ask once.</p>'
+            '<p><a href="%s" target="_blank" rel="noreferrer noopener">Open the terminal</a></p></section>'
+            % html.escape(url, quote=True)
+        )
+
     def _page(self, msg):
         snap = self._snapshot()
         pane = self.inst.pane() or "(no tmux session)"
@@ -501,7 +523,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 <p>%(restart)s</p>
 <p class="small">Restart stops claude; the daemon starts it again with --continue. It interrupts any turn in progress.</p>
 <pre>%(pane)s</pre></section>
-<section><h2>Watchdog log</h2><pre>%(wlog)s</pre></section>
+%(terminal)s<section><h2>Watchdog log</h2><pre>%(wlog)s</pre></section>
 </main></body></html>""" % {
             "inst": html.escape(snap["instance"]),
             "style": STYLE,
@@ -519,7 +541,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "restart": self._form("/restart", "Restart claude"),
             "pane": html.escape(pane.rstrip()),
             "wlog": html.escape(self.inst.log_tail()),
+            "terminal": self._terminal_section(),
         }
+
+
+class Server(http.server.ThreadingHTTPServer):
+    """ThreadingHTTPServer with optional TLS.
+
+    The TLS handshake is deferred to the handler thread (do_handshake_on_connect
+    is off), so a client that connects and says nothing cannot block accept().
+    """
+
+    ssl_context = None
+
+    def get_request(self):
+        sock, addr = super().get_request()
+        if self.ssl_context is not None:
+            sock = self.ssl_context.wrap_socket(sock, server_side=True, do_handshake_on_connect=False)
+        return sock, addr
+
+    def handle_error(self, request, client_address):
+        # A plain-HTTP client on the HTTPS port, a scanner, a timeout: one line, no traceback.
+        log("warn", "connection from %s dropped: %s" % (client_address[0], sys.exc_info()[1]))
 
 
 def make_server(cfg, password):
@@ -530,7 +573,20 @@ def make_server(cfg, password):
         "fails": {},
         "fails_lock": threading.Lock(),
     })
-    return http.server.ThreadingHTTPServer((cfg.bind, cfg.port), handler)
+    server = Server((cfg.bind, cfg.port), handler)
+    if cfg.tls_cert or cfg.tls_key:
+        if not (cfg.tls_cert and cfg.tls_key):
+            server.server_close()
+            raise SystemExit("CC_TLS_CERT and CC_TLS_KEY must both be set")
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        try:
+            ctx.load_cert_chain(cfg.tls_cert, cfg.tls_key)
+        except (OSError, ssl.SSLError) as exc:
+            server.server_close()
+            raise SystemExit("cannot load TLS certificate/key (%s, %s): %s" % (cfg.tls_cert, cfg.tls_key, exc))
+        server.ssl_context = ctx
+    return server
 
 
 def main(argv):
@@ -541,9 +597,10 @@ def main(argv):
     cfg = Config(parse_env_file(path))
     password = cfg.load_password()
     server = make_server(cfg, password)
-    log("info", "listening on http://%s:%d (instance=%s session=%s)" % (cfg.bind, cfg.port, cfg.instance, cfg.session))
-    if cfg.bind not in ("127.0.0.1", "::1", "localhost"):
-        log("warn", "serving plain HTTP beyond localhost; keep it on a trusted network")
+    scheme = "https" if server.ssl_context is not None else "http"
+    log("info", "listening on %s://%s:%d (instance=%s session=%s)" % (scheme, cfg.bind, cfg.port, cfg.instance, cfg.session))
+    if scheme == "http" and cfg.bind not in ("127.0.0.1", "::1", "localhost"):
+        log("warn", "serving plain HTTP beyond localhost; the password crosses the network in clear. Use TLS (install.sh --tls) or a trusted network")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

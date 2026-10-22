@@ -16,6 +16,8 @@ source "$ROOT_DIR/lib/conflict-detect.sh"
 source "$ROOT_DIR/bin/claude-rc-watchdog.sh"
 # shellcheck source=../bin/claude-daemon.sh
 source "$ROOT_DIR/bin/claude-daemon.sh"
+# shellcheck source=../bin/cc-service-terminal.sh
+source "$ROOT_DIR/bin/cc-service-terminal.sh"
 
 PASS=0
 FAIL=0
@@ -242,6 +244,44 @@ test_no_conversation_detected() {
     test_fail "no_conversation_to_continue matched wrongly (fixture: no-conversation)"
   fi
 }
+
+test_build_ttyd_args() {
+  local args=() out
+  # shellcheck disable=SC2034  # consumed by build_ttyd_args() in bin/cc-service-terminal.sh, a separately sourced file
+  CC_TERMINAL_PORT=7681 CC_TERMINAL_IFACE=eth0 CC_TLS_CERT=/c.crt CC_TLS_KEY=/c.key CC_TMUX_SOCKET=sock CC_TMUX_SESSION=claude
+  build_ttyd_args args 'hunter2-hunter2'
+  out=" ${args[*]} "
+  local ok=true want
+  for want in " -W " " -O " " -p 7681 " " -i eth0 " " --ssl " " --ssl-cert /c.crt " " --ssl-key /c.key " \
+              " -c cc:hunter2-hunter2 " " tmux -L sock attach-session -t claude "; do
+    [[ "$out" == *"$want"* ]] || { ok=false; echo "    missing:$want"; }
+  done
+  # The window must end the argument list (ttyd runs everything after the options).
+  [ "${args[-1]}" = "claude" ] || ok=false
+  if $ok; then
+    pass "build_ttyd_args: writable, origin-checked, TLS, one interface, credential, attaches the session"
+  else
+    test_fail "build_ttyd_args: $out"
+  fi
+}
+
+test_build_ttyd_args_defaults() {
+  local args=()
+  unset CC_TERMINAL_PORT CC_TERMINAL_IFACE CC_TMUX_SOCKET CC_TMUX_SESSION
+  # shellcheck disable=SC2034
+  CC_TLS_CERT=/c.crt CC_TLS_KEY=/c.key
+  build_ttyd_args args 'hunter2-hunter2'
+  local out=" ${args[*]} "
+  if [[ "$out" == *" -i lo "* && "$out" == *" -p 7681 "* && "$out" == *" tmux attach-session -t claude "* ]]; then
+    pass "build_ttyd_args defaults to the loopback interface, port 7681 and session 'claude'"
+  else
+    test_fail "build_ttyd_args defaults: $out"
+  fi
+}
+
+echo "== cc-service-terminal.sh =="
+test_build_ttyd_args
+test_build_ttyd_args_defaults
 
 echo "== claude-daemon.sh =="
 test_no_conversation_detected

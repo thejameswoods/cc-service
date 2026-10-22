@@ -127,6 +127,46 @@ test_install_web_dry_run() {
   fi
 }
 
+test_install_terminal_requires_tls_and_web() {
+  local out rc
+  out=$(PATH="$(make_stub_path):$PATH" bash "$ROOT_DIR/install.sh" \
+          --project-dir /tmp --service-name citest --terminal --dry-run --yes 2>&1)
+  rc=$?
+  if [ "$rc" -eq 2 ] && [[ "$out" == *"--terminal requires --web"* ]]; then
+    pass "install.sh --terminal without --web fails fast with exit 2"
+  else
+    test_fail "expected exit 2 + message; got rc=$rc out=$out"
+  fi
+  out=$(PATH="$(make_stub_path):$PATH" bash "$ROOT_DIR/install.sh" \
+          --project-dir /tmp --service-name citest --web --web-password-file /tmp/pw --terminal --dry-run --yes 2>&1)
+  rc=$?
+  if [ "$rc" -eq 2 ] && [[ "$out" == *"--terminal requires --tls"* ]]; then
+    pass "install.sh --terminal without --tls fails fast with exit 2"
+  else
+    test_fail "expected exit 2 + message; got rc=$rc out=$out"
+  fi
+}
+
+test_install_terminal_dry_run() {
+  local out rc
+  out=$(PATH="$(make_stub_path):$PATH" bash "$ROOT_DIR/install.sh" \
+          --project-dir /tmp --service-name citest --tmux-session claude-citest \
+          --web --web-password-file /tmp/pw --tls --tls-san 10.0.0.9 --tls-san ws.lan \
+          --terminal --terminal-iface eth0 --terminal-port 7700 \
+          --dry-run --yes 2>&1)
+  rc=$?
+  if [ "$rc" -eq 0 ] && [[ "$out" == *"cc-service-terminal@citest.service"* ]] && [[ "$out" == *"self-signed TLS certificate"* ]]; then
+    pass "install.sh --web --tls --terminal --dry-run plans the certificate and the terminal unit"
+  else
+    test_fail "expected exit 0 + terminal unit and certificate in plan; got rc=$rc out=$out"
+  fi
+  if [ ! -e /etc/cc-service/citest-tls.crt ]; then
+    pass "install.sh --tls --dry-run created no certificate"
+  else
+    test_fail "dry-run must never write /etc/cc-service"
+  fi
+}
+
 echo "== install.sh / uninstall.sh CLI smoke tests =="
 test_install_help
 test_uninstall_help
@@ -134,6 +174,8 @@ test_install_missing_project_dir
 test_install_dry_run_no_conflicts
 test_install_web_requires_password_file
 test_install_web_dry_run
+test_install_terminal_requires_tls_and_web
+test_install_terminal_dry_run
 test_uninstall_dry_run
 
 echo

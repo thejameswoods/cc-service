@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Optional browser terminal (`install.sh --terminal`, `bin/cc-service-terminal.sh`,
+  `cc-service-terminal@.service`): ttyd attached to the daemon's tmux session, over
+  TLS, with the status page's user and password, bound to one network interface,
+  with its WebSocket origin checked. Needs ttyd, `--web` and `--tls`.
+- `install.sh --tls` (and `--tls-san`): the status page is served over HTTPS with a
+  self-signed certificate created in `/etc/cc-service`. The page shares its password
+  with the terminal, so it must not send it in clear.
+
 ### Fixed
 - The daemon starts a fresh session whenever `claude --continue` reports
   "No conversation found to continue", not only once per daemon lifetime. A new

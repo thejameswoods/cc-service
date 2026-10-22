@@ -161,6 +161,54 @@ only while claude is asking for one), press the listed menu keys, and restart
 Bind it to `127.0.0.1` (the default) and reach it over an SSH tunnel, or to a
 trusted LAN address; do not expose it to the internet.
 
+### TLS
+
+`--tls` serves the page over HTTPS with a self-signed certificate created in
+`/etc/cc-service/<name>-tls.crt` and `.key` (key mode 0400, owned by the service
+user). The host name and the `--web-bind` address go into the certificate;
+add more with `--tls-san <name-or-ip>` (repeatable). Browsers warn once about a
+self-signed certificate. Delete both files to have a new one made on the next
+install. Without `--tls` the password crosses the network in clear.
+
+### Browser terminal (optional)
+
+`--terminal` adds a real terminal in the browser, attached to the daemon's tmux
+session: the same as `tmux attach` over SSH, with scrollback, colour and
+copy/paste, instead of scrolling the page's pane box. It uses
+[ttyd](https://github.com/tsl0922/ttyd) (`apt install ttyd`).
+
+```bash
+sudo ./install.sh --project-dir /path/to/your/project \
+  --web --web-password-file /etc/cc-service/web-password --web-bind <lan-ip> \
+  --tls --tls-san <lan-ip> --tls-san <host>.lan \
+  --terminal --terminal-iface eth0
+```
+
+Open `https://<host>:7681/` (user `cc`, the page's password). The page links to
+it. The terminal binds to the **network interface** you name (ttyd takes an
+interface, not an address); the default `lo` is reachable from the machine only.
+
+**This is a shell-grade surface.** The terminal takes free text, so anyone who
+can sign in can instruct the agent, which may be running in `--permission-mode
+auto` with sudo and stored credentials. Treat the password like a root login.
+
+What is in place: TLS only (plain HTTP to the port gets a redirect, nothing
+else); HTTP Basic auth on every request; WebSocket connections with a foreign
+`Origin` are refused (without that, any web page you visit could drive the
+terminal through your browser's cached credentials); at most two browser
+terminals at once; one interface.
+
+Known limitations:
+
+- ttyd takes its credential as a command-line argument, so the password is
+  visible to other local users in the process list while the terminal runs. On a
+  single-purpose machine that is the service user, root and whoever else you
+  gave a login. Don't enable it where that matters.
+- A browser attached to the session resizes the tmux window to its size, like an
+  SSH client would.
+- ttyd has no lockout for repeated wrong passwords (the status page does).
+  Keep it on a LAN you trust.
+
 Like the watchdog it relies on Claude Code's own wording (`Paste code here`,
 the spinner text). If a release changes it the page still shows the raw pane,
 so you can finish by hand, and `tmux attach` always works.
