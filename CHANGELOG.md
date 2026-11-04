@@ -23,6 +23,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and no longer turns an existing `settings.json` into a root-owned 0600 file
   when merging `remoteControlAtStartup`. Either made `claude` unable to save
   its login ("credentials could not be saved to the credentials file").
+- A project dir on a network mount (NFS) no longer takes the daemon down with its
+  server. The unit's `WorkingDirectory=` was the project dir, which made systemd
+  require the mount: with the server down at boot the unit failed with
+  `Dependency failed` and was never retried (nor was the watchdog, via its
+  `Requisite=`). `WorkingDirectory=` is now the service user's home;
+  `claude-daemon.sh` waits for the project dir (at start and before each respawn)
+  instead of failing or hanging on it; `TimeoutStopSec=20` bounds a stop that is
+  stuck on a dead mount. A `claude` already running on a hard mount when the server
+  vanishes still hangs until the server returns (see README).
 
 ### Added
 - Optional status and login page (`install.sh --web`, `bin/cc-service-web.py`,

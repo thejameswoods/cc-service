@@ -25,7 +25,13 @@ Environment=HOME={{RUN_AS_HOME}}
 # this unit's Environment= -- confirmed live. Argv always passes through
 # tmux new-session exactly as given, regardless of which server handles it.
 Environment=CC_CONFIG_PATH=/etc/cc-service/%i.env
-WorkingDirectory={{CC_PROJECT_DIR}}
+# The service user's home, NOT the project dir. systemd turns WorkingDirectory=
+# into a hard requirement on the mount that holds it: with the project dir on
+# a network mount (NFS) whose server is down at boot, the unit then failed with
+# "Dependency failed" and, since that is not a runtime failure, Restart=always
+# never retried it -- the daemon stayed dead after the server came back.
+# claude-daemon.sh does its own `cd` to CC_PROJECT_DIR and waits for it.
+WorkingDirectory={{RUN_AS_HOME}}
 # -L gives this instance its own dedicated tmux server/socket rather than
 # sharing the OS user's default one -- required so Type=forking's cgroup
 # based PID tracking actually finds this instance's process tree instead
@@ -36,6 +42,10 @@ ExecStart=/usr/bin/tmux -L {{CC_TMUX_SOCKET}} new-session -d -s {{CC_TMUX_SESSIO
 ExecStop=/usr/bin/tmux -L {{CC_TMUX_SOCKET}} kill-session -t {{CC_TMUX_SESSION}}
 Restart=always
 RestartSec=5
+# Bound a stop that cannot finish: a claude stuck on a hung network mount
+# ignores SIGTERM, and the default 90s + 90s (SIGTERM, then SIGKILL) made a
+# reboot sit for three minutes. systemd gives up on it after this.
+TimeoutStopSec=20
 
 # Deliberately light-touch hardening: the daemon runs `claude`, whose tool
 # calls need broad filesystem access within the operator's project(s), so

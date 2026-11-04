@@ -119,6 +119,27 @@ Claude Code's TUI, which could be reworded in a future release. Set
 `CC_LOG_LEVEL=debug` to log the raw pane capture on every poll if self-heal
 seems to have stopped firing.
 
+## Project directory on a network mount
+
+`--project-dir` may live on NFS or SMB. The daemon is built to survive that
+server being down:
+
+- The service unit's `WorkingDirectory=` is the service user's home, **not**
+  the project dir. systemd treats `WorkingDirectory=` as a hard requirement on
+  the mount that holds it, so a project dir on a down server made the unit fail
+  with `Dependency failed` at boot, and `Restart=always` never retried it.
+- `claude-daemon.sh` waits for the project dir (at start and before every
+  respawn), logging `project dir not available` once a minute, and carries on
+  by itself the moment it answers. It never gives up, so a mistyped path waits
+  forever and says so in the log.
+- `TimeoutStopSec=20` bounds a stop that can't finish.
+
+What this can't fix: with a **hard** NFS mount, a `claude` that is already
+running in the directory when the server disappears hangs in the kernel
+(uninterruptible, immune to SIGKILL) until the server returns. It recovers by
+itself then, but it is unavailable meanwhile. Use `soft,timeo=...` mount
+options only if you accept that a write during an outage can fail.
+
 ## Status and login page (optional)
 
 The one failure the watchdog cannot heal is an expired or missing login, and

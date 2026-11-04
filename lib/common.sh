@@ -52,6 +52,46 @@ require_cmd() {
   fi
 }
 
+# _cc_pid_running <pid>: true while <pid> exists and is not a zombie.
+# `kill -0` alone is not enough -- an exited but not yet reaped child still
+# answers it, so a finished probe would look stuck forever.
+_cc_pid_running() {
+  local stat_line state
+  stat_line=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+  state="${stat_line##*) }"
+  state="${state%% *}"
+  [ "$state" != "Z" ]
+}
+
+# dir_responsive <dir> [timeout-in-tenths-of-a-second, default 30]
+# True if <dir> answers a stat() within the timeout. Safe to call on a
+# network mount that is down:
+#   - the stat runs in the background, so a hung NFS server cannot block the
+#     caller (a stat stuck on a hard mount sits in uninterruptible sleep and
+#     ignores even SIGKILL until the server returns);
+#   - a probe that is still stuck is never stacked with a second one -- the
+#     call just reports "not responsive" until the old probe finishes.
+dir_responsive() {
+  local dir="$1" tenths="${2:-30}" i rc
+  if [ -n "${_CC_PROBE_PID:-}" ]; then
+    _cc_pid_running "$_CC_PROBE_PID" && return 1
+    wait "$_CC_PROBE_PID" 2>/dev/null   # reap the finished probe
+    _CC_PROBE_PID=""
+  fi
+  stat -- "$dir" >/dev/null 2>&1 &
+  _CC_PROBE_PID=$!
+  for ((i = 0; i < tenths; i++)); do
+    if ! _cc_pid_running "$_CC_PROBE_PID"; then
+      wait "$_CC_PROBE_PID"
+      rc=$?
+      _CC_PROBE_PID=""
+      return "$rc"
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
 load_config() {
   # load_config <path-to-env-file>
   local f="$1"
