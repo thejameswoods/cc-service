@@ -279,9 +279,118 @@ test_build_ttyd_args_defaults() {
   fi
 }
 
+# --- project dir on a network mount ----------------------------------------
+# `stat` is stubbed on PATH, so no real mount is needed. Each stub reads a
+# flag file: while it exists the "server" is down (stat hangs or fails).
+
+make_stat_stub() {
+  # make_stat_stub <dir> hang|fail <flag-file> <call-log>
+  local dir="$1" mode="$2" flag="$3" calls="$4"
+  cat > "$dir/stat" <<EOF
+#!/bin/bash
+echo x >> "$calls"
+if [ -e "$flag" ]; then
+  if [ "$mode" = hang ]; then sleep 2; fi
+  exit 1
+fi
+exit 0
+EOF
+  chmod +x "$dir/stat"
+}
+
+test_dir_responsive_existing_dir() {
+  _CC_PROBE_PID=""
+  if dir_responsive "$ROOT_DIR" 20; then
+    pass "dir_responsive: an existing directory answers"
+  else
+    test_fail "dir_responsive: existing directory reported unresponsive"
+  fi
+}
+
+test_dir_responsive_missing_dir_fails_fast() {
+  _CC_PROBE_PID=""
+  local start=$SECONDS
+  if ! dir_responsive "$ROOT_DIR/does-not-exist" 50 && [ $((SECONDS - start)) -lt 3 ]; then
+    pass "dir_responsive: a missing directory fails at once, not after the timeout"
+  else
+    test_fail "dir_responsive: missing directory should fail fast"
+  fi
+}
+
+test_dir_responsive_hung_probe_not_stacked() {
+  local d; d=$(mktemp -d)
+  local flag="$d/down" calls="$d/calls"
+  touch "$flag"
+  make_stat_stub "$d" hang "$flag" "$calls"
+  _CC_PROBE_PID=""
+  local old_path="$PATH" rc1 rc2 rc3 n
+  PATH="$d:$PATH"
+  dir_responsive /fake 5; rc1=$?          # hangs 2s, gives up after 0.5s
+  dir_responsive /fake 5; rc2=$?          # old probe still stuck: must not start another
+  n=$(wc -l < "$calls")
+  sleep 2.5                               # the stuck probe finishes
+  rm -f "$flag"                           # server is back
+  dir_responsive /fake 20; rc3=$?
+  PATH="$old_path"
+  rm -rf "$d"
+  if [ "$rc1" -ne 0 ] && [ "$rc2" -ne 0 ] && [ "$n" -eq 1 ] && [ "$rc3" -eq 0 ]; then
+    pass "dir_responsive: a hung stat times out, is not stacked, and recovers when the server returns"
+  else
+    test_fail "dir_responsive hung probe: rc1=$rc1 rc2=$rc2 stat-calls=$n rc3=$rc3"
+  fi
+}
+
+test_wait_for_project_dir_waits_then_continues() {
+  local d; d=$(mktemp -d)
+  local flag="$d/down" calls="$d/calls" logf="$d/log"
+  touch "$flag"
+  make_stat_stub "$d" fail "$flag" "$calls"
+  _CC_PROBE_PID=""
+  local old_path="$PATH" pid i done_in_time=false rc=1
+  PATH="$d:$PATH"
+  ( CC_PROJECT_DIR_POLL_SEC=1 wait_for_project_dir /fake 2>"$logf" ) &
+  pid=$!
+  sleep 2.5
+  local still_waiting=false
+  _cc_pid_running "$pid" && still_waiting=true
+  rm -f "$flag"                           # the server comes back
+  for ((i = 0; i < 80; i++)); do
+    if ! _cc_pid_running "$pid"; then done_in_time=true; break; fi
+    sleep 0.1
+  done
+  if $done_in_time; then wait "$pid"; rc=$?; else kill "$pid" 2>/dev/null; fi
+  PATH="$old_path"
+  if $still_waiting && $done_in_time && [ "$rc" -eq 0 ] \
+     && grep -q "project dir not available" "$logf" \
+     && grep -q "project dir available again" "$logf"; then
+    pass "wait_for_project_dir: waits while the mount is down, logs it, and returns once it is back"
+  else
+    test_fail "wait_for_project_dir: still_waiting=$still_waiting done=$done_in_time rc=$rc log=$(tr '\n' '|' < "$logf")"
+  fi
+  rm -rf "$d"
+}
+
+test_unit_template_has_no_mount_dependency() {
+  local t="$ROOT_DIR/systemd/cc-service@.service.tmpl"
+  if grep -q '^WorkingDirectory={{RUN_AS_HOME}}$' "$t" \
+     && ! grep -q 'WorkingDirectory={{CC_PROJECT_DIR}}' "$t" \
+     && grep -q '^TimeoutStopSec=' "$t"; then
+    pass "service unit: WorkingDirectory is the user's home (no mount requirement) and TimeoutStopSec is bounded"
+  else
+    test_fail "service unit template still ties WorkingDirectory to the project dir, or lacks TimeoutStopSec"
+  fi
+}
+
 echo "== cc-service-terminal.sh =="
 test_build_ttyd_args
 test_build_ttyd_args_defaults
+
+echo "== project dir on a network mount =="
+test_dir_responsive_existing_dir
+test_dir_responsive_missing_dir_fails_fast
+test_dir_responsive_hung_probe_not_stacked
+test_wait_for_project_dir_waits_then_continues
+test_unit_template_has_no_mount_dependency
 
 echo "== claude-daemon.sh =="
 test_no_conversation_detected
